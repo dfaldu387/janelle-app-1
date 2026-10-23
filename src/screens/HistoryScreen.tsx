@@ -35,6 +35,8 @@ interface Props {
   activeId: string;
   speechLang: string;
   onSpeechLangChange: (code: string) => void;
+  speakReplies: boolean;
+  onSpeakRepliesChange: (on: boolean) => void;
   onSelect: (id: string) => void;
   onNew: () => void;
   onPin: (id: string) => void;
@@ -68,6 +70,7 @@ function conversationToMarkdown(c: Conversation): string {
 
 export default function HistoryScreen({
   conversations, activeId, speechLang, onSpeechLangChange,
+  speakReplies, onSpeakRepliesChange,
   onSelect, onNew, onPin, onRename, onDelete, onClose,
 }: Props) {
   const insets = useSafeAreaInsets();
@@ -241,6 +244,19 @@ export default function HistoryScreen({
           ))}
         </View>
       </View>
+
+      {/* Speak replies toggle */}
+      <Pressable
+        style={[s.langSection, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
+        onPress={() => onSpeakRepliesChange(!speakReplies)}>
+        <View style={{ flex: 1 }}>
+          <Text style={s.langTitle}>Read replies aloud</Text>
+          <Text style={s.langDesc}>Speak every answer, even without hands-free mode.</Text>
+        </View>
+        <View style={{ width: 44, height: 24, borderRadius: 12, backgroundColor: speakReplies ? C.brass : C.sunk, borderWidth: 1, borderColor: speakReplies ? C.brass : C.line, justifyContent: 'center', paddingHorizontal: 2 }}>
+          <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: '#fff', alignSelf: speakReplies ? 'flex-end' : 'flex-start' }} />
+        </View>
+      </Pressable>
 
       {/* Conversation list */}
       <ScrollView

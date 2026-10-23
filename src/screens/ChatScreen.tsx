@@ -24,7 +24,15 @@ try {
     const mod = NativeModules.JanelleTts;
     const emitter = new NativeEventEmitter(mod);
     Tts = {
-      speak: (text: string) => mod.speak(text),
+      speak: (text: string) => {
+        return new Promise<void>((resolve) => {
+          const sub = emitter.addListener('tts-finish', () => {
+            sub.remove();
+            resolve();
+          });
+          mod.speak(text);
+        });
+      },
       stop: () => mod.stop(),
       addEventListener: (event: string, cb: () => void) => {
         const sub = emitter.addListener('tts-finish', cb);
@@ -523,7 +531,7 @@ function conversationToMarkdown(c: Conversation): string {
     if (m.role === 'user') {
       lines.push(`**You** (${time}):`, m.content, '');
     } else {
-      lines.push(`**Janelle** (${time}):`, m.content, '');
+      lines.push(`**Jenny** (${time}):`, m.content, '');
     }
   }
   return lines.join('\n');
@@ -559,9 +567,12 @@ export default function ChatScreen() {
   const [handsFree, setHandsFree] = useState(false);
   const [interim, setInterim] = useState<string | null>(null);
   const [voicePhase, setVoicePhase] = useState<'listening' | 'thinking' | 'speaking'>('listening');
-  const [attachedFiles, setAttachedFiles] = useState<Array<{ token: string; name: string }>>([]);
+  const [attachedFiles, setAttachedFiles] = useState<Array<{ token: string; name: string; size?: number; mimeType?: string; uri?: string }>>([]);
   const [uploading, setUploading] = useState(false);
+  const [speakReplies, setSpeakReplies] = useState(false);
   const [speechLang, setSpeechLangState] = useState('en-US');
+  const [vocabulary, setVocabulary] = useState<string[]>([]);
+  const voiceAlternativesRef = useRef<string[]>([]);
 
   // Persist speech language
   useEffect(() => {
@@ -690,6 +701,10 @@ export default function ChatScreen() {
 
   useEffect(() => {
     fetchBriefing();
+    // Load studio vocabulary for voice disambiguation (matches web)
+    api<{ words: string[] }>(ENDPOINTS.ASSISTANT_VOCABULARY)
+      .then(data => { if (data?.words?.length) setVocabulary(data.words); })
+      .catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -771,8 +786,7 @@ export default function ChatScreen() {
 
   const ttsStop = () => {
     try {
-      const { NativeModules } = require('react-native');
-      NativeModules.TextToSpeech?.stop(false);
+      if (Tts) Tts.stop();
     } catch {}
   };
 
@@ -789,7 +803,7 @@ export default function ChatScreen() {
     ttsStop();
     setSpeakingId(id);
     try {
-      await Tts.speak(speakable(text), {});
+      await Tts.speak(speakable(text));
     } catch (e) {
       setSpeakingId(null);
     }
@@ -822,6 +836,8 @@ export default function ChatScreen() {
           // Echo detection: skip if mic picked up the speaker
           if (soundsLikeEcho(e.value[0])) { setInterim(null); return; }
           setInput(e.value[0]);
+          // Store all alternatives for API disambiguation (matches web)
+          voiceAlternativesRef.current = (e.value ?? []).slice(0, 5);
           // In hands-free mode, auto-send when speech ends
           if (handsFree && e.value[0].trim()) {
             setVoicePhase('thinking');
@@ -911,6 +927,21 @@ export default function ChatScreen() {
     })();
   }, [handsFree, sending, voicePhase, messages.length, speechLang]);
 
+  // Match web: speakReplies — auto-speak every reply even outside hands-free mode
+  const speakRepliesRef = useRef(speakReplies);
+  speakRepliesRef.current = speakReplies;
+  useEffect(() => {
+    if (handsFree || sending) return; // hands-free handles its own speaking
+    if (!speakReplies || !Tts) return;
+    const last = messages[messages.length - 1];
+    if (!last || last.role !== 'assistant') return;
+    if (last.id === spokenMsgRef.current) return;
+    const text = last.answer?.speech || last.answer?.lead || last.content;
+    if (!text) return;
+    spokenMsgRef.current = last.id;
+    Tts.speak(speakable(text));
+  }, [handsFree, sending, speakReplies, messages.length]);
+
   // Turn off hands-free mode cleanly
   const endHandsFree = () => {
     setHandsFree(false);
@@ -935,7 +966,14 @@ export default function ChatScreen() {
       const resp = await fetch(result.uri);
       const blob = await resp.blob();
       const uploaded = await apiUpload<{ token: string }>(ENDPOINTS.ASSISTANT_UPLOAD, blob);
-      setAttachedFiles(prev => [...prev, { token: uploaded.token, name: result.name || 'file' }]);
+      const isImage = (result.type || '').startsWith('image/');
+      setAttachedFiles(prev => [...prev, {
+        token: uploaded.token,
+        name: result.name || 'file',
+        size: result.size || blob.size,
+        mimeType: result.type || blob.type,
+        uri: isImage ? result.uri : undefined,
+      }]);
     } catch (err) {
       if (!DocumentPicker.isCancel?.(err)) {
         showAlert('Upload failed', (err as Error).message);
@@ -947,6 +985,8 @@ export default function ChatScreen() {
 
   const removeAttachment = (token: string) => {
     setAttachedFiles(prev => prev.filter(f => f.token !== token));
+    // Match web: tell the server to forget the unused upload
+    api('/assistant/uploads/forget', { method: 'POST', body: JSON.stringify({ tokens: [token] }) }).catch(() => {});
   };
 
   const imagineRequest = useCallback(async (text: string) => {
@@ -989,6 +1029,7 @@ export default function ChatScreen() {
         content: data.answer.lead || '',
         timestamp: Date.now(),
         answer,
+        ...(data.startedJobs?.length ? { jobs: data.startedJobs } : {}),
       };
       updateActive(msgs => [...msgs, assistantMsg]);
       if (data.answer.suggestions?.length) setSuggestions(data.answer.suggestions);
@@ -1001,6 +1042,20 @@ export default function ChatScreen() {
       // Poll for async jobs (image/video generation) — same as web
       if (data.startedJobs?.length) {
         const remainingJobs = new Set(data.startedJobs);
+        const settleJob = (jobId: string, item: AnswerItem | null, failure: string | null) => {
+          remainingJobs.delete(jobId);
+          updateActive(msgs => msgs.map(m => {
+            if (m.id !== msgId || !m.jobs?.includes(jobId)) return m;
+            const left = m.jobs.filter(j => j !== jobId);
+            return {
+              ...m,
+              jobs: left.length ? left : undefined,
+              answer: m.answer
+                ? { ...m.answer, items: item ? [...m.answer.items, item] : m.answer.items, caveat: failure ?? m.answer.caveat }
+                : m.answer,
+            };
+          }));
+        };
         const poll = async () => {
           let attempts = 0;
           while (remainingJobs.size > 0 && attempts < 60 && !controller.signal.aborted) {
@@ -1011,21 +1066,8 @@ export default function ChatScreen() {
                 const job = await api<{ status: string; item?: AnswerItem; error?: string }>(
                   `${ENDPOINTS.ASSISTANT_MEDIA}/${jobId}`,
                 );
-                if (job.status === 'done' && job.item) {
-                  updateActive(msgs => msgs.map(m =>
-                    m.id === msgId
-                      ? { ...m, answer: m.answer ? { ...m.answer, items: [...m.answer.items, job.item!] } : m.answer }
-                      : m,
-                  ));
-                  remainingJobs.delete(jobId);
-                } else if (job.status !== 'pending') {
-                  updateActive(msgs => msgs.map(m =>
-                    m.id === msgId
-                      ? { ...m, answer: m.answer ? { ...m.answer, caveat: job.error || 'The image could not be made.' } : m.answer }
-                      : m,
-                  ));
-                  remainingJobs.delete(jobId);
-                }
+                if (job.status === 'done' && job.item) settleJob(jobId, job.item, null);
+                else if (job.status !== 'pending') settleJob(jobId, null, job.error || 'The image could not be made.');
               } catch {}
             }
             attempts++;
@@ -1089,7 +1131,7 @@ export default function ChatScreen() {
           .then(view => {
             if (!view || !view.tasks?.length) {
               const lead = 'Nothing to check in about today — nothing of yours was due, and nothing is blocked. Have a good evening.';
-              updateActive(msgs => [...msgs, { id: `a-${Date.now()}`, role: 'assistant', content: lead, timestamp: Date.now(), answer: { lead, items: [], sources: [], suggestions: [] } }]);
+              updateActive(msgs => [...msgs, { id: `a-${Date.now()}`, role: 'assistant', content: lead, timestamp: Date.now(), answer: { lead, items: [], more: 0, speech: lead, sources: [], suggestions: [] } }]);
             } else {
               updateActive(msgs => [...msgs, {
                 id: `ci-${Date.now()}`, role: 'assistant', content: view.answer?.lead || 'How did today go?',
@@ -1142,7 +1184,7 @@ export default function ChatScreen() {
       // Match web: 8 messages, embed proposal states, filter errors
       // Include files from each message (not just currently attached)
       const history = messages
-        .filter(m => m.kind !== 'error' && !m.isBriefing)
+        .filter(m => m.kind !== 'error')
         .slice(-8)
         .map(m => {
           const fileNames = (m as any).files?.length ? `\n[Attached: ${(m as any).files.map((f: any) => f.name).join(', ')}]` : '';
@@ -1174,6 +1216,11 @@ export default function ChatScreen() {
       if (agents.length) body.agents = agents;
       if (currentFiles.length) {
         body.attachments = currentFiles.map(f => ({ token: f.token }));
+      }
+      // Match web: send voice recognition alternatives for disambiguation
+      if (voiceAlternativesRef.current.length > 1) {
+        body.spoken = { alternatives: voiceAlternativesRef.current };
+        voiceAlternativesRef.current = [];
       }
 
       let result: AssistantTurn | null = null;
@@ -1224,17 +1271,57 @@ export default function ChatScreen() {
       }
 
       const answer: StructuredAnswer | undefined = r.answer
-        ? { lead: r.answer.lead || '', items: r.answer.items || [], suggestions: r.answer.suggestions, sources: r.answer.sources, caveat: r.answer.caveat, more: r.answer.more, document: r.answer.document, documentTitle: r.answer.documentTitle }
+        ? { lead: r.answer.lead || '', items: r.answer.items || [], speech: r.answer.speech, suggestions: r.answer.suggestions, sources: r.answer.sources, caveat: r.answer.caveat, more: r.answer.more, document: r.answer.document, documentTitle: r.answer.documentTitle }
         : undefined;
+      const msgId = `a-${Date.now()}`;
+      const jobs = (r as any).startedJobs as string[] | undefined;
       const assistantMsg: ChatMessage = {
-        id: `a-${Date.now()}`, role: 'assistant',
+        id: msgId, role: 'assistant',
         content: r.reply || r.answer?.lead || '',
         timestamp: Date.now(),
         proposed: r.proposed?.map(p => ({ ...p, status: 'waiting' as const })),
         answer,
+        ...(jobs?.length ? { jobs } : {}),
       };
       updateActive(msgs => [...msgs, assistantMsg]);
       if (r.answer?.suggestions?.length) setSuggestions(r.answer.suggestions);
+
+      // Poll for async jobs (image/video generation) — same as web
+      if (jobs?.length) {
+        const remainingJobs = new Set(jobs);
+        const settleJob = (jobId: string, item: AnswerItem | null, failure: string | null) => {
+          remainingJobs.delete(jobId);
+          updateActive(msgs => msgs.map(m => {
+            if (m.id !== msgId || !m.jobs?.includes(jobId)) return m;
+            const left = m.jobs.filter(j => j !== jobId);
+            return {
+              ...m,
+              jobs: left.length ? left : undefined,
+              answer: m.answer
+                ? { ...m.answer, items: item ? [...m.answer.items, item] : m.answer.items, caveat: failure ?? m.answer.caveat }
+                : m.answer,
+            };
+          }));
+        };
+        const poll = async () => {
+          let attempts = 0;
+          while (remainingJobs.size > 0 && attempts < 60 && !controller.signal.aborted) {
+            await new Promise<void>(resolve => setTimeout(resolve, 5000));
+            if (controller.signal.aborted) return;
+            for (const jobId of [...remainingJobs]) {
+              try {
+                const job = await api<{ status: string; item?: AnswerItem; error?: string }>(
+                  `${ENDPOINTS.ASSISTANT_MEDIA}/${jobId}`,
+                );
+                if (job.status === 'done' && job.item) settleJob(jobId, job.item, null);
+                else if (job.status !== 'pending') settleJob(jobId, null, job.error || 'The image could not be made.');
+              } catch {}
+            }
+            attempts++;
+          }
+        };
+        poll().catch(() => {});
+      }
     } catch (err) {
       if ((err as Error).name !== 'AbortError') {
         const errFiles = currentFiles.length ? currentFiles.map(f => ({ name: f.name, token: f.token })) : undefined;
@@ -1263,6 +1350,9 @@ export default function ChatScreen() {
   const submitEdit = () => {
     if (!editingId || !editText.trim()) { setEditingId(null); return; }
     const original = messages.find(m => m.id === editingId);
+    // Match web: the files it carried go again — the edit is to the words
+    const originalFiles = (original?.files ?? []).map(f => ({ token: f.token, name: f.name }));
+    if (originalFiles.length) setAttachedFiles(originalFiles);
     // Remove this message and everything after, then re-send
     updateActive(msgs => {
       const idx = msgs.findIndex(m => m.id === editingId);
@@ -1270,8 +1360,13 @@ export default function ChatScreen() {
     });
     setEditingId(null);
     // Match web: if the original was made in image mode, re-imagine instead of asking
-    if (original?.made) imagineRequest(editText);
-    else sendMessage(editText);
+    // Defer to next tick so React flushes the sliced messages before sendMessage reads them
+    const text = editText;
+    const made = original?.made;
+    setTimeout(() => {
+      if (made) imagineRequest(text);
+      else sendMessageRef.current(text);
+    }, 0);
   };
 
   const confirmProposal = useCallback(async (messageId: string, proposalKey: string) => {
@@ -1399,7 +1494,7 @@ export default function ChatScreen() {
 
   // ── Renderers ──
   const MessageFooter = ({ item }: { item: ChatMessage }) => {
-    const speakText = item.answer?.lead || item.content;
+    const speakText = item.answer?.speech || item.answer?.lead || item.content;
     return (
       <View style={s.messageFooter}>
         <Pressable style={s.footerBtn} onPress={() => copyText(item.id, item.content)}>
@@ -1520,7 +1615,9 @@ export default function ChatScreen() {
                   const isAsking = checkinAsking === t.id;
                   return (
                     <View key={t.id} style={[{ paddingHorizontal: 14, paddingVertical: 10 }, ti > 0 && { borderTopWidth: 1, borderTopColor: C.line }]}>
-                      <Text style={[{ fontSize: 13.5, fontWeight: '600', color: C.ink, lineHeight: 20 }, (settled === 'done' || g.key === 'done') && { textDecorationLine: 'line-through', color: C.inkSoft }]}>{t.title}</Text>
+                      <Pressable onPress={() => setDataPage('tasks')}>
+                        <Text style={[{ fontSize: 13.5, fontWeight: '600', color: C.ink, lineHeight: 20, textDecorationLine: 'underline' }, (settled === 'done' || g.key === 'done') && { textDecorationLine: 'line-through', color: C.inkSoft }]}>{t.title}</Text>
+                      </Pressable>
                       {meta ? <Text style={{ fontSize: 12, color: C.inkSoft, marginTop: 2 }}>{meta}</Text> : null}
                       {t.note && !settled && <Text style={{ fontSize: 12, color: C.inkSoft, marginTop: 4, borderLeftWidth: 2, borderLeftColor: C.crit + '99', paddingLeft: 8 }}>{t.note}</Text>}
                       {settled && t.outcomeNote ? <Text style={{ fontSize: 12, color: C.inkSoft, marginTop: 4, borderLeftWidth: 2, borderLeftColor: C.brass + '99', paddingLeft: 8 }}>{t.outcomeNote}</Text> : null}
@@ -1551,7 +1648,7 @@ export default function ChatScreen() {
                           <TextInput
                             autoFocus
                             style={{ flex: 1, minHeight: 36, borderRadius: 8, borderWidth: 1, borderColor: C.line, backgroundColor: C.sunk, paddingHorizontal: 10, paddingVertical: 6, fontSize: 13, color: C.ink }}
-                            placeholder="What is in the way?"
+                            placeholder="What is in the way? Who are you waiting on?"
                             placeholderTextColor={C.inkFaint}
                             value={checkinWhy}
                             onChangeText={setCheckinWhy}
@@ -1570,7 +1667,7 @@ export default function ChatScreen() {
           );
         })}
         {tasks.some(t => !t.outcome && t.bucket !== 'done') && (
-          <Text style={{ fontSize: 12.5, color: C.inkFaint }}>Anything not answered stays as it is.</Text>
+          <Text style={{ fontSize: 12.5, color: C.inkFaint }}>Anything not answered stays as it is. Something else in your way? Just say so here.</Text>
         )}
       </View>
     );
@@ -1583,7 +1680,7 @@ export default function ChatScreen() {
         {message.proposed.map(p => {
           const isDraft = p.tool === 'propose_draft';
           const isUpdate = p.tool === 'propose_task_update';
-          const confirmLabel = isDraft ? 'Save to Drafts' : isUpdate ? 'Update Task' : 'Add Task';
+          const confirmLabel = isDraft ? 'Save to Drafts' : 'Confirm';
           const savedLabel = isDraft ? 'Saved to Drafts' : isUpdate ? 'Updated' : 'Added to Tasks';
           const dismissedLabel = isUpdate ? 'Not changed' : 'Not added';
           return (
@@ -1606,6 +1703,7 @@ export default function ChatScreen() {
                 <View style={s.proposalActions}>
                   <Pressable style={s.confirmBtn} onPress={() => confirmProposal(message.id, p.key)}><Text style={s.confirmBtnText}>{confirmLabel}</Text></Pressable>
                   <Pressable style={s.dismissBtn} onPress={() => dismissProposal(message.id, p.key)}><Text style={s.dismissBtnText}>Dismiss</Text></Pressable>
+                  <Text style={{ fontSize: 11.5, color: C.inkFaint }}>or just say "yes"</Text>
                 </View>
               )}
               {p.status === 'saving' && <Text style={s.savingText}>Saving…</Text>}
@@ -1654,7 +1752,7 @@ export default function ChatScreen() {
                 <Icon name={copiedId === item.id ? 'checkmark' : 'copy-outline'} size={13} color={C.inkFaint} />
                 <Text style={s.userActionText}>{copiedId === item.id ? 'Copied' : 'Copy'}</Text>
               </Pressable>
-              <Pressable style={s.userActionBtn} onPress={() => editMessage(item.id)}>
+              <Pressable style={s.userActionBtn} disabled={sending} onPress={() => editMessage(item.id)}>
                 <Icon name="create-outline" size={13} color={C.inkFaint} />
                 <Text style={s.userActionText}>Edit</Text>
               </Pressable>
@@ -1668,13 +1766,18 @@ export default function ChatScreen() {
               <View style={[s.assistantContentBubble, isBriefing && s.briefingContentBubble, item.kind === 'error' && s.errorContentBubble]}>
                 {isBriefing && <Text style={s.briefingLabel}>YOUR BRIEFING</Text>}
                 {item.kind === 'checkin' && <Text style={s.briefingLabel}>END-OF-DAY CHECK-IN</Text>}
-                <Text style={[s.messageText, s.assistantText]}>{item.answer?.lead || item.content}</Text>
+                <Text style={[s.messageText, s.assistantText]}>{item.kind === 'error' ? `That didn't work: ${item.content}` : (item.answer?.lead || item.content)}</Text>
                 {isBriefing && !item.answer?.items?.length && renderBriefingItems()}
                 {item.answer && item.answer.items?.length > 0 && (
                   isBriefing ? renderBriefingFromAnswer(item.answer) : <AnswerItems answer={item.answer} />
                 )}
                 {item.kind === 'checkin' && item.checkin?.length ? renderCheckinTasks(item) : null}
                 {renderProposals(item)}
+                {(item.jobs?.length ?? 0) > 0 && (
+                  <View style={s.renderingBar}>
+                    <Loader dotsOnly message={item.jobs!.length > 1 ? `${item.jobs!.length} clips are rendering` : 'The clip is rendering — it appears here when it is ready.'} />
+                  </View>
+                )}
               </View>
               {item.kind === 'error' && (
                 <Pressable style={s.retryBtn} onPress={() => {
@@ -1691,7 +1794,7 @@ export default function ChatScreen() {
                     if (lastUser) sendMessage(lastUser.content);
                   }
                 }}>
-                  <Text style={s.retryBtnText}>Try again</Text>
+                  <Text style={s.retryBtnText}>{item.retryKind === 'image' ? 'Draw it again' : item.retryKind === 'video' ? 'Make it again' : 'Try again'}</Text>
                 </Pressable>
               )}
               <MessageFooter item={item} />
@@ -1721,7 +1824,7 @@ export default function ChatScreen() {
           <Icon name="sparkles" size={26} color={C.brassDeep} />
         </View>
         <Text style={s.emptyTitle}>What would you like to know about the studio?</Text>
-        <Text style={s.emptySubtitle}>Ask a question in plain English. Janelle searches the studio's tasks, mail, projects and Drive and explains what she finds, naming where each answer came from.</Text>
+        <Text style={s.emptySubtitle}>Ask a question in plain English. Jenny searches the studio's tasks, mail, projects and Drive and explains what she finds, naming where each answer came from.</Text>
         <View style={s.quickCards}>
           {QUICK_CARDS.map(c => (
             <Pressable key={c.question} style={s.quickCard} onPress={() => sendMessage(c.question)}>
@@ -1765,7 +1868,7 @@ export default function ChatScreen() {
     <View style={s.container}>
       {/* Header */}
       <View style={[s.header, { paddingTop: insets.top + 10 }]}>
-        <Text style={s.headerTitle}>Janelle</Text>
+        <Text style={s.headerTitle}>Jenny</Text>
         <View style={s.headerRight}>
           <Pressable style={s.headerChip} onPress={() => setHistoryOpen(true)}>
             <Icon name="time-outline" size={14} color={C.inkSoft} />
@@ -1812,12 +1915,22 @@ export default function ChatScreen() {
           <View style={s.attachBar}>
             {attachedFiles.map(f => {
               const isPdf = f.name.toLowerCase().endsWith('.pdf');
+              const isImage = f.uri || (f.mimeType || '').startsWith('image/');
+              const sizeStr = f.size ? (f.size < 1024 ? `${f.size} B` : f.size < 1048576 ? `${(f.size / 1024).toFixed(0)} KB` : `${(f.size / 1048576).toFixed(1)} MB`) : '';
+              const { Image: RNImage } = require('react-native');
               return (
                 <View key={f.token} style={s.attachChip}>
-                  <View style={[s.attachBadge, isPdf ? s.attachBadgePdf : s.attachBadgeImg]}>
-                    <Text style={[s.attachBadgeText, isPdf ? s.attachBadgePdfText : s.attachBadgeImgText]}>{isPdf ? 'PDF' : 'IMG'}</Text>
+                  {f.uri && isImage ? (
+                    <RNImage source={{ uri: f.uri }} style={{ width: 32, height: 32, borderRadius: 4 }} />
+                  ) : (
+                    <View style={[s.attachBadge, isPdf ? s.attachBadgePdf : s.attachBadgeImg]}>
+                      <Text style={[s.attachBadgeText, isPdf ? s.attachBadgePdfText : s.attachBadgeImgText]}>{isPdf ? 'PDF' : 'IMG'}</Text>
+                    </View>
+                  )}
+                  <View style={{ minWidth: 0, flex: 1 }}>
+                    <Text style={s.attachText} numberOfLines={1}>{f.name}</Text>
+                    {sizeStr ? <Text style={{ fontSize: 11, color: C.inkFaint }}>{sizeStr}</Text> : null}
                   </View>
-                  <Text style={s.attachText} numberOfLines={1}>{f.name}</Text>
                   <Pressable onPress={() => removeAttachment(f.token)}>
                     <Icon name="close" size={12} color={C.inkFaint} />
                   </Pressable>
@@ -1844,7 +1957,7 @@ export default function ChatScreen() {
                 <Text style={s.plusMenuLabel}>{composeMode === 'image' ? 'Back to asking' : 'Make an image'}</Text>
                 <Text style={s.plusMenuHint}>
                   {composeMode === 'image'
-                    ? 'Janelle answers from the studio\'s records, mail and Drive'
+                    ? 'Jenny answers from the studio\'s records, mail and Drive'
                     : 'Drawn from your words · no tokens spent'}
                 </Text>
               </View>
@@ -1906,7 +2019,7 @@ export default function ChatScreen() {
                 </Pressable>
               )}
               {voicePhase === 'speaking' && Tts && (
-                <Pressable style={s.voiceBarSecondary} onPress={() => { try { Tts.stop(); } catch {} setVoicePhase('listening'); startListening(); }}>
+                <Pressable style={s.voiceBarSecondary} onPress={() => { try { Tts.stop(); } catch {} }}>
                   <Text style={s.voiceBarSecondaryText}>Skip</Text>
                 </Pressable>
               )}
@@ -1937,7 +2050,7 @@ export default function ChatScreen() {
             </Pressable>
             <TextInput
               style={s.textInput}
-              placeholder={listening ? (micStatus === 'hearing' ? 'Hearing you…' : 'Listening…') : composeMode === 'image' ? 'Describe the picture — the room, the materials, the light' : 'Ask Janelle anything…'}
+              placeholder={listening ? (micStatus === 'hearing' ? 'Hearing you…' : 'Listening…') : composeMode === 'image' ? 'Describe the picture — the room, the materials, the light' : 'Ask Jenny anything…'}
               placeholderTextColor={listening ? C.crit : C.inkFaint}
               value={input} onChangeText={setInput}
               multiline maxLength={2000} editable={!sending}
@@ -1990,6 +2103,7 @@ export default function ChatScreen() {
                     if (e.value?.[0]) {
                       if (soundsLikeEcho(e.value[0])) { setInterim(null); return; }
                       setInput(e.value[0]);
+                      voiceAlternativesRef.current = (e.value ?? []).slice(0, 5);
                       setVoicePhase('thinking');
                       setTimeout(() => sendMessageRef.current(e.value![0]), 300);
                     }
@@ -2026,6 +2140,8 @@ export default function ChatScreen() {
           activeId={activeId}
           speechLang={speechLang}
           onSpeechLangChange={setSpeechLang}
+          speakReplies={speakReplies}
+          onSpeakRepliesChange={setSpeakReplies}
           onSelect={handleSelectConversation}
           onNew={handleNewConversation}
           onPin={handlePinConversation}
@@ -2102,7 +2218,7 @@ export default function ChatScreen() {
             </View>
             <View style={s.menuDivider} />
             {[
-              { label: 'Janelle', icon: 'chatbubble-ellipses-outline', action: () => { setMenuOpen(false); setPriorityOpen(false); setDataPage(null); } },
+              { label: 'Jenny', icon: 'chatbubble-ellipses-outline', action: () => { setMenuOpen(false); setPriorityOpen(false); setDataPage(null); } },
               { label: 'Tasks', icon: 'checkmark-circle-outline', action: () => { setMenuOpen(false); setDataPage('tasks'); } },
               { label: 'Inbox', icon: 'mail-outline', action: () => { setMenuOpen(false); setDataPage('inbox'); } },
               { label: 'Drafts', icon: 'create-outline', action: () => { setMenuOpen(false); setDataPage('drafts'); } },
@@ -2222,6 +2338,7 @@ const s = StyleSheet.create({
   attachBadgeImgText: { color: C.olive },
   attachText: { fontSize: 12, color: C.inkSoft, maxWidth: 100 },
   attachRemove: { fontSize: 12, color: C.inkFaint, fontWeight: '600', padding: 2 },
+  renderingBar: { marginTop: 10, flexDirection: 'row' as const, alignItems: 'center' as const, gap: 10, borderRadius: 8, borderWidth: 1, borderColor: C.line, backgroundColor: C.surface, paddingHorizontal: 12, paddingVertical: 10 },
   proposalsWrap: { marginTop: 10, gap: 8 },
   proposalCard: { backgroundColor: C.sunk, borderRadius: 10, borderWidth: 1, borderColor: C.line, padding: 14 },
   proposalText: { fontSize: 13, color: C.inkSoft, marginBottom: 8 },

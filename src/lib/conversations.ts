@@ -79,6 +79,8 @@ export interface ChatMessage {
   retryKind?: 'image' | 'video';
   /** For check-in messages: the tasks and what the person answered. */
   checkin?: CheckinTask[];
+  /** Async jobs still rendering (image/video generation). */
+  jobs?: string[];
 }
 
 export interface ProposedAction {
