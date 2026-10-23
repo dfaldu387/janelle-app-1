@@ -13,6 +13,7 @@ export interface AnswerFile {
 }
 export interface AnswerItem {
   kind: string;
+  id?: string | null;
   title: string;
   detail?: string;
   fields?: AnswerField[];
@@ -26,12 +27,34 @@ export interface AnswerItem {
 export interface StructuredAnswer {
   lead: string;
   items: AnswerItem[];
+  speech?: string;
   suggestions?: string[];
   sources?: string[];
   caveat?: string;
   more?: number;
   document?: string;
   documentTitle?: string;
+}
+
+export type CheckinOutcome = 'done' | 'blocked' | 'tomorrow';
+
+export interface CheckinTask {
+  id: string;
+  title: string;
+  project?: string | null;
+  due?: string | null;
+  status?: string | null;
+  bucket?: 'open' | 'blocked' | 'tomorrow' | 'done';
+  note?: string | null;
+  outcome?: CheckinOutcome | null;
+  outcomeNote?: string | null;
+}
+
+export interface AttachedFile {
+  name: string;
+  mimeType?: string;
+  size?: number;
+  token: string;
 }
 
 export interface ChatMessage {
@@ -42,6 +65,20 @@ export interface ChatMessage {
   proposed?: ProposedAction[];
   isBriefing?: boolean;
   answer?: StructuredAnswer;
+  /** Message kind: briefing, error, or checkin — matches web's kind field. */
+  kind?: 'briefing' | 'error' | 'checkin';
+  /** For user messages made in image/video mode — so editing re-routes to imagine. */
+  made?: 'image' | 'video';
+  /** Files attached to a question. */
+  files?: AttachedFile[];
+  /** For errors: the question to retry. */
+  retry?: string;
+  /** For errors: the files that question carried. */
+  retryFiles?: AttachedFile[];
+  /** For errors: image/video mode to retry in. */
+  retryKind?: 'image' | 'video';
+  /** For check-in messages: the tasks and what the person answered. */
+  checkin?: CheckinTask[];
 }
 
 export interface ProposedAction {

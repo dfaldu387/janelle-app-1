@@ -46,7 +46,32 @@
       "Bash(./gradlew clean:*)",
       "Bash(./gradlew app:assembleDebug -PreactNativeDevServerPort=8082)",
       "Bash(ios-deploy:*)",
-      "Bash(xcodebuild -workspace JanelleApp.xcworkspace -scheme JanelleApp -destination \"id=00008101-001561D82610001E\" -allowProvisioningUpdates)"
+      "Bash(xcodebuild -workspace JanelleApp.xcworkspace -scheme JanelleApp -destination \"id=00008101-001561D82610001E\" -allowProvisioningUpdates)",
+      "Skill(claude-in-chrome)",
+      "WebFetch(domain:janelle-interiors-automation.vercel.app)",
+      "WebSearch",
+      "Bash(adb devices:*)",
+      "Bash(adb connect:*)",
+      "Bash(adb kill-server:*)",
+      "Bash(adb start-server:*)",
+      "Bash(./gradlew app:assembleDebug)",
+      "Bash(npm uninstall:*)",
+      "Bash(adb -s 192.168.1.19:46203 uninstall com.janelleapp)",
+      "Bash(adb -s 192.168.1.19:46203 install /Users/admin/Desktop/janelle-app/android/app/build/outputs/apk/debug/app-debug.apk)",
+      "Bash(adb:*)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(node:*)",
+      "Bash(find node_modules/@react-native-voice/voice/android -name *.java -o -name *.kt)",
+      "mcp__claude_ai_Google_Drive__search_files",
+      "Bash(find /Users/admin/Desktop -type f \\\\\\(-iname *jenny* -o -iname *chat* -o -iname *assistant* -o -iname *briefing* \\\\\\))",
+      "Bash(find /Users/admin/Desktop/janelle-app -type f \\\\\\(-iname *jenny* -o -iname *chat* -o -iname *assistant* -o -iname *briefing* \\\\\\))",
+      "Bash(find /Users/admin/Desktop/janelle-app/src -type f -name *.tsx -o -name *.ts)",
+      "Bash(find /Users/admin/Desktop/janelle-interiors-automation/packages -type f \\\\\\(-iname *jenny* -o -iname *assistant* -o -iname *briefing* \\\\\\))",
+      "Bash(ls /Users/admin/Desktop/janelle-app/android/settings.gradle*)",
+      "Bash(find /Users/admin/Desktop/janelle-app/android/build -name *.class -path *voice*)",
+      "Bash(find /Users/admin/Desktop/janelle-app/android/build -name *.class -path *Voice*)",
+      "Bash(find /Users/admin/Desktop/janelle-app/node_modules/@react-native-voice/voice/android/build -name *.class)",
+      "Bash(bash scripts/patch-deps.sh)"
     ]
   }
 }

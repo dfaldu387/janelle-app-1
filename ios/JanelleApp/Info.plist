@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>JanelleApp</string>
+	<string>Janelle</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -36,9 +36,9 @@
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string></string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Jenny uses speech recognition to let you speak your questions.</string>
+	<string>Janelle uses speech recognition to let you speak your questions.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Jenny uses the microphone for voice input.</string>
+	<string>Janelle uses the microphone for voice input.</string>
 	<key>RCTNewArchEnabled</key>
 	<true/>
 	<key>UIAppFonts</key>

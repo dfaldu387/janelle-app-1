@@ -70,8 +70,8 @@ export default function AgentPicker({ visible, selected, onToggle, onSelectAll, 
 
         <ScrollView contentContainerStyle={styles.list}>
           <Text style={styles.hint}>
-            Select agents to focus Jenny on specific tools. Leave all unchecked
-            to let Jenny use any tool she needs.
+            Select agents to focus Janelle on specific tools. Leave all unchecked
+            to let Janelle use any tool she needs.
           </Text>
 
           <View style={styles.toggleRow}>
@@ -122,8 +122,8 @@ export default function AgentPicker({ visible, selected, onToggle, onSelectAll, 
           <View style={[styles.footerWrap, { paddingBottom: Math.max(insets.bottom, 20) }]}>
             <Text style={styles.footerText}>
               {selected.length === 0
-                ? 'No agents selected — Jenny will decide which tools to use based on your question.'
-                : `Jenny will only use tools from: ${selected.map(k => AGENTS.find(a => a.key === k)?.label).join(', ')}`}
+                ? 'No agents selected — Janelle will decide which tools to use based on your question.'
+                : `Janelle will only use tools from: ${selected.map(k => AGENTS.find(a => a.key === k)?.label).join(', ')}`}
             </Text>
           </View>
         </ScrollView>

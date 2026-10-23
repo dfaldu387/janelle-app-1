@@ -1,6 +1,7 @@
+import { showAlert } from '../components/DarkAlert';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Alert,
+  AppState,
   FlatList,
   KeyboardAvoidingView,
   Modal,
@@ -17,23 +18,44 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 let Tts: any = null;
 let Voice: any = null;
 let DocumentPicker: any = null;
-try { Tts = require('react-native-tts').default; } catch {}
-try { Voice = require('@react-native-voice/voice').default; } catch {}
-try { DocumentPicker = require('react-native-document-picker').default; } catch {}
+try {
+  const { NativeModules, NativeEventEmitter } = require('react-native');
+  if (NativeModules.JanelleTts) {
+    const mod = NativeModules.JanelleTts;
+    const emitter = new NativeEventEmitter(mod);
+    Tts = {
+      speak: (text: string) => mod.speak(text),
+      stop: () => mod.stop(),
+      addEventListener: (event: string, cb: () => void) => {
+        const sub = emitter.addListener('tts-finish', cb);
+        return { remove: () => sub.remove() };
+      },
+      setDefaultLanguage: () => {},
+      setIgnoreSilentSwitch: () => {},
+    };
+  }
+} catch {}
+try {
+  const _Voice = require('@react-native-voice/voice').default;
+  // Verify the native module is actually linked (not just the JS wrapper)
+  const { NativeModules } = require('react-native');
+  if (NativeModules.Voice) Voice = _Voice;
+} catch {}
+try { DocumentPicker = require('@react-native-documents/picker'); } catch {}
 import Icon from 'react-native-vector-icons/Ionicons';
 import { useAuth } from '../context/AuthContext';
-import { api, apiStream, apiUpload, NetworkError } from '../lib/api';
+import { api, apiStream, apiUpload, apiImageSource, NetworkError } from '../lib/api';
+import { supabase } from '../lib/supabase';
 let Config: any = {};
 try { Config = require('react-native-config').default || {}; } catch {}
 import { ENDPOINTS } from '../lib/endpoints';
 import {
   loadStore, saveStore, newConversation,
   type ChatMessage, type Conversation, type StructuredAnswer, type AnswerItem,
+  type CheckinTask, type CheckinOutcome, type AttachedFile,
 } from '../lib/conversations';
 import Loader from '../components/Loader';
 import { Markdown } from '../components/Markdown';
-import CheckIn from '../components/CheckIn';
-import Imagine from '../components/Imagine';
 import DataPage, { StatusPill, s as ds } from '../components/DataPage';
 import TopPriorityActions from '../components/TopPriorityActions';
 import TasksPage from '../components/TasksPage';
@@ -42,12 +64,13 @@ import DraftsPage from '../components/DraftsPage';
 import HistoryScreen from './HistoryScreen';
 import SettingsScreen from './SettingsScreen';
 import AgentPicker, { type AgentKey } from '../components/AgentPicker';
+import CheckIn from '../components/CheckIn';
 
 const C = {
   page: '#0F1724', surface: '#162032', sunk: '#1E2A40',
   ink: '#F1F5F9', inkSoft: '#BFCBDB', inkFaint: '#8C9BB2',
   line: '#2C3A52', lineSoft: '#222F44',
-  brass: '#2563EB', brassDeep: '#1D4ED8', brassLight: '#60A5FA',
+  brass: '#2563EB', brassDeep: '#60A5FA', brassLight: '#60A5FA',
   nav: '#0B1220', good: '#4ADE80', crit: '#F87171', olive: '#A78BFA', warn: '#FBBF24',
 };
 
@@ -76,6 +99,47 @@ function metaTextStyle(item: { tone?: string; meta?: string }) {
   if (item.tone === 'crit' || /late|overdue|blocked/.test(m)) return { color: C.crit };
   if (item.tone === 'warn' || /due today|today/.test(m)) return { color: C.warn };
   return {};
+}
+
+/** Clean text for TTS — strip URLs, emoji, markdown, symbols. Matches web's speakable(). */
+function speakable(text: string): string {
+  let s = text
+    .replace(/https?:\/\/\S+/gi, ' ')
+    .replace(/\bwww\.\S+/gi, ' ')
+    .replace(/\p{Extended_Pictographic}/gu, ' ');
+  s = s.split(/\r?\n+/)
+    .map(line => line.replace(/^\s*(?:[-*•·>]|#{1,6}|\d+[.)])\s+/, '').trim())
+    .filter(Boolean)
+    .reduce((said, line) => (said ? `${said}${/[.!?:;,]$/.test(said) ? ' ' : '. '}${line}` : line), '');
+  s = s
+    .replace(/\*\*|__|`+/g, '')
+    .replace(/(^|\s)[*_](\S)/g, '$1$2')
+    .replace(/(\S)[*_](?=\s|$|[.,!?])/g, '$1')
+    .replace(/\s*[—–]\s*/g, ', ')
+    .replace(/\s+-\s+/g, ', ')
+    .replace(/\s*[·•|]\s*/g, ', ')
+    .replace(/([\p{L}\p{N}])-(?=[\p{L}\p{N}])/gu, '$1 ')
+    .replace(/(\p{L})\s*\/\s*(?=\p{L})/gu, '$1 or ')
+    .replace(/\s*&\s*/g, ' and ')
+    .replace(/#(?=\d)/g, 'number ')
+    .replace(/[""„‟"«»]/g, '')
+    .replace(/(?<!\p{L})[''']|['''](?!\p{L})/gu, '')
+    .replace(/'/g, "'")
+    .replace(/\s*[([{]\s*/g, ', ')
+    .replace(/\s*[)\]}]\s*/g, ', ')
+    .replace(/…|\.{3,}/g, '.')
+    .replace(/[→←↑↓⇒⇐↗↘✓✔✗✘*_~^=<>\\]/g, ' ')
+    .replace(/\$(?!\d)/g, ' ');
+  return s
+    .replace(/\s+/g, ' ')
+    .replace(/\s+([,.!?;:])/g, '$1')
+    .replace(/,(\s*,)+/g, ',')
+    .replace(/([.!?;:]),/g, '$1')
+    .replace(/,\s*([.!?])/g, '$1')
+    .replace(/([.!?])(\s*\.)+/g, '$1')
+    .replace(/^[\s,.;:]+/, '')
+    .replace(/[\s,;:]+$/, '')
+    .trim();
 }
 
 const KIND_LABELS: Record<string, string> = {
@@ -119,6 +183,11 @@ function AnswerItems({ answer }: { answer: StructuredAnswer }) {
   const columns = sharedColumns(records);
   return (
     <>
+      {/* Document block first — matches web order */}
+      {!!answer.document && (
+        <AnswerDocumentBlock title={answer.documentTitle} body={answer.document} />
+      )}
+
       {records.length > 0 && (
         columns ? (
           <RecordTable items={records} columns={columns} />
@@ -134,7 +203,7 @@ function AnswerItems({ answer }: { answer: StructuredAnswer }) {
           {files.map((item, i) =>
             item.preview === 'video' ? (
               <VideoPreview key={i} item={item} />
-            ) : item.preview === 'image' ? (
+            ) : item.preview ? (
               <ImagePreview key={i} item={item} />
             ) : (
               <AnswerItemRow key={i} item={item} />
@@ -143,9 +212,6 @@ function AnswerItems({ answer }: { answer: StructuredAnswer }) {
         </View>
       )}
 
-      {!!answer.document && (
-        <AnswerDocumentBlock title={answer.documentTitle} body={answer.document} />
-      )}
       {(answer.more ?? 0) > 0 && (
         <Text style={s.answerMore}>…and {answer.more} more{answer.items.length > 0 ? ' not shown' : ''}.</Text>
       )}
@@ -264,22 +330,145 @@ function RecordTable({ items, columns }: { items: AnswerItem[]; columns: string[
   );
 }
 
-/** Preview for image file items. */
+/**
+ * Preview for image file items.
+ * Fetches image bytes with auth in RN context (avoids CORS),
+ * converts to base64 data URI, renders in WebView (handles SVG/PNG/JPEG).
+ */
 function ImagePreview({ item }: { item: AnswerItem }) {
-  const Image = require('react-native').Image;
-  const [error, setError] = React.useState(false);
-  const fileUrl = item.file?.token
-    ? `https://janelle.dev-build.in/api/assistant/file?token=${encodeURIComponent(item.file.token)}`
-    : item.url || null;
-  if (!fileUrl || error) return null;
+  const { ActivityIndicator } = require('react-native');
+  let WebView: any = null;
+  try { WebView = require('react-native-webview').WebView; } catch {}
+  const [dataUri, setDataUri] = React.useState<string | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        let fetchUrl: string | null = null;
+        let needsAuth = false;
+
+        if (item.file?.token) {
+          const src = await apiImageSource(`/assistant/file?token=${encodeURIComponent(item.file.token)}`);
+          fetchUrl = src.uri;
+          needsAuth = true;
+        } else if (item.url) {
+          fetchUrl = item.url;
+        }
+        if (!fetchUrl) { if (!cancelled) setError('No image source'); return; }
+
+        // Fetch image bytes with auth in RN context
+        const headers: Record<string, string> = {};
+        if (needsAuth) {
+          const { data: sd } = await supabase.auth.getSession();
+          if (sd.session?.access_token) headers.Authorization = `Bearer ${sd.session.access_token}`;
+        }
+
+        const resp = await fetch(fetchUrl, { headers });
+        if (!resp.ok) {
+          const errBody = await resp.text().catch(() => '');
+          let errMsg = `HTTP ${resp.status}`;
+          try { const j = JSON.parse(errBody); if (j.error) errMsg = j.error; } catch {}
+          if (!cancelled) setError(errMsg);
+          return;
+        }
+
+        const contentType = resp.headers.get('content-type') || 'image/png';
+        const isSvg = contentType.includes('svg');
+
+        if (isSvg) {
+          // SVG: fetch as text, embed directly — no blob/base64 needed
+          const svgText = await resp.text();
+          if (!cancelled) setDataUri('SVG:' + svgText);
+        } else {
+          // Raster (PNG/JPEG/WebP): convert to base64 data URI
+          const blob = await resp.blob();
+          const base64 = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+              if (typeof reader.result === 'string') resolve(reader.result);
+              else reject(new Error('FileReader returned non-string'));
+            };
+            reader.onerror = () => reject(new Error('FileReader error'));
+            reader.readAsDataURL(blob);
+          });
+          if (!cancelled) setDataUri(base64);
+        }
+      } catch (e) {
+        if (!cancelled) setError((e as Error).message || 'Failed to load image');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [item.file?.token, item.url]);
+
+  if (error) {
+    return (
+      <View style={s.imagePreview}>
+        <Text style={{ fontSize: 13, color: C.inkFaint, textAlign: 'center', padding: 16 }}>{error}</Text>
+      </View>
+    );
+  }
+  if (!dataUri) {
+    return (
+      <View style={s.imagePreview}>
+        <View style={[s.imagePreviewImg, { alignItems: 'center', justifyContent: 'center' }]}>
+          <ActivityIndicator color={C.brassLight} />
+          <Text style={{ fontSize: 12, color: C.inkFaint, marginTop: 8 }}>Loading image…</Text>
+        </View>
+      </View>
+    );
+  }
+
+  const isSvgContent = dataUri.startsWith('SVG:');
+  const svgMarkup = isSvgContent ? dataUri.slice(4) : null;
+
+  // SVG: render directly in WebView with the raw SVG markup
+  if (isSvgContent && WebView) {
+    const html = `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>*{margin:0;padding:0;box-sizing:border-box}body{background:#0F1724;width:100vw;height:100vh;display:flex;align-items:center;justify-content:center;overflow:auto}svg{max-width:100%;height:auto}</style></head><body>${svgMarkup}</body></html>`;
+    return (
+      <View style={s.imagePreview}>
+        {item.title ? <Text style={s.imagePreviewTitle}>{item.title}</Text> : null}
+        <WebView
+          style={[s.imagePreviewImg, { height: 400 }]}
+          originWhitelist={['*']}
+          source={{ html }}
+          scrollEnabled={true}
+          javaScriptEnabled={false}
+          onError={() => setError('Failed to render SVG')}
+        />
+      </View>
+    );
+  }
+
+  // Raster image: use WebView with base64 data URI, or fallback to RN Image
+  if (WebView) {
+    const html = `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>*{margin:0;padding:0}body{background:#0F1724;display:flex;align-items:center;justify-content:center;min-height:100vh}img{max-width:100%;max-height:100vh;object-fit:contain}</style></head><body><img src="${dataUri}" /></body></html>`;
+    return (
+      <View style={s.imagePreview}>
+        {item.title ? <Text style={s.imagePreviewTitle}>{item.title}</Text> : null}
+        <WebView
+          style={s.imagePreviewImg}
+          originWhitelist={['*']}
+          source={{ html }}
+          scrollEnabled={false}
+          javaScriptEnabled={false}
+          onError={() => setError('Failed to render image')}
+        />
+      </View>
+    );
+  }
+
+  // Last fallback: plain RN Image (JPEG/PNG only, no SVG)
+  const { Image: RNImage } = require('react-native');
   return (
     <View style={s.imagePreview}>
       {item.title ? <Text style={s.imagePreviewTitle}>{item.title}</Text> : null}
-      <Image
-        source={{ uri: fileUrl }}
+      <RNImage
+        source={{ uri: dataUri }}
         style={s.imagePreviewImg}
         resizeMode="contain"
-        onError={() => setError(true)}
+        onError={(e: any) => setError(e?.nativeEvent?.error || 'Cannot display this format')}
       />
     </View>
   );
@@ -334,7 +523,7 @@ function conversationToMarkdown(c: Conversation): string {
     if (m.role === 'user') {
       lines.push(`**You** (${time}):`, m.content, '');
     } else {
-      lines.push(`**Jenny** (${time}):`, m.content, '');
+      lines.push(`**Janelle** (${time}):`, m.content, '');
     }
   }
   return lines.join('\n');
@@ -366,7 +555,12 @@ export default function ChatScreen() {
   const [agentsOpen, setAgentsOpen] = useState(false);
   const [agents, setAgents] = useState<AgentKey[]>([]);
   const [listening, setListening] = useState(false);
+  const [micStatus, setMicStatus] = useState<'starting' | 'listening' | 'hearing'>('starting');
+  const [handsFree, setHandsFree] = useState(false);
+  const [interim, setInterim] = useState<string | null>(null);
+  const [voicePhase, setVoicePhase] = useState<'listening' | 'thinking' | 'speaking'>('listening');
   const [attachedFiles, setAttachedFiles] = useState<Array<{ token: string; name: string }>>([]);
+  const [uploading, setUploading] = useState(false);
   const [speechLang, setSpeechLangState] = useState('en-US');
 
   // Persist speech language
@@ -384,8 +578,8 @@ export default function ChatScreen() {
   };
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [checkinOpen, setCheckinOpen] = useState(false);
-  const [imagineOpen, setImagineOpen] = useState(false);
   const [priorityOpen, setPriorityOpen] = useState(false);
+  const [composeMode, setComposeMode] = useState<'ask' | 'image'>('ask');
   const [menuOpen, setMenuOpen] = useState(false);
   const [dataPage, setDataPage] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -408,17 +602,29 @@ export default function ChatScreen() {
     prevMsgCount.current = messages.length;
   }, [messages.length]);
 
-  // Load conversations
+  // Load conversations — match web: reset on a new day so Jenny always opens clean
   useEffect(() => {
     if (!userId) return;
-    loadStore(userId).then(store => {
-      if (store.conversations.length) {
+    const AsyncStorageMod = require('@react-native-async-storage/async-storage').default;
+    loadStore(userId).then(async store => {
+      const today = new Date().toDateString();
+      let savedDay: string | null = null;
+      try { savedDay = await AsyncStorageMod.getItem('janelle.activeDay'); } catch {}
+      if (savedDay && savedDay !== today) {
+        // New day — start fresh (match web's forToday), keep agent choices only
+        const first = newConversation();
+        setConversations([first]);
+        setActiveId(first.id);
+        AsyncStorageMod.setItem('janelle.activeDay', today).catch(() => {});
+      } else if (store.conversations.length) {
         setConversations(store.conversations);
         setActiveId(store.activeId || store.conversations[0].id);
+        if (!savedDay) AsyncStorageMod.setItem('janelle.activeDay', today).catch(() => {});
       } else {
         const first = newConversation();
         setConversations([first]);
         setActiveId(first.id);
+        AsyncStorageMod.setItem('janelle.activeDay', today).catch(() => {});
       }
       setLoaded(true);
     });
@@ -431,28 +637,75 @@ export default function ChatScreen() {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       saveStore(userId, { v: 3, conversations, activeId });
+      // Persist today marker for day-reset logic
+      const AsyncStorageMod = require('@react-native-async-storage/async-storage').default;
+      AsyncStorageMod.setItem('janelle.activeDay', new Date().toDateString()).catch(() => {});
     }, 500);
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
   }, [userId, conversations, activeId, loaded]);
 
-  // Load briefing with timeout
+  // Load briefing with timeout — once per calendar day, re-checks on foreground
+  const briefingFetched = useRef(false);
+  /** Cached briefing reused across new conversations while fresh (matching web's 15-min TTL). */
+  const briefingCacheRef = useRef<{ day: string; hour: number; at: number; data: Briefing } | null>(null);
+  const BRIEFING_TTL_MS = 15 * 60_000;
+  const fetchBriefing = useCallback((isRefresh = false) => {
+    const today = new Date().toDateString();
+    const AsyncStorageMod = require('@react-native-async-storage/async-storage').default;
+    if (!isRefresh) setBriefingLoading(true);
+    AsyncStorageMod.getItem('janelle.briefedOn').then((last: string | null) => {
+      if (last === today) { setBriefingLoading(false); briefingFetched.current = true; return; }
+      const timeout = setTimeout(() => setBriefingLoading(false), 8000);
+      const hour = new Date().getHours();
+      api<Briefing & { more?: number }>(`${ENDPOINTS.ASSISTANT_BRIEFING}?hour=${hour}`)
+        .then(data => {
+          if (data?.lead) {
+            const briefingData = { lead: data.lead, items: data.items || [], suggestions: data.suggestions || [] };
+            setBriefing(briefingData);
+            setSuggestions(data.suggestions || []);
+            // Cache for reuse by new conversations (matching web)
+            briefingCacheRef.current = { day: today, hour, at: Date.now(), data: briefingData };
+            const briefingMsg: ChatMessage = { id: 'briefing', role: 'assistant' as const, content: data.lead, timestamp: Date.now(), isBriefing: true };
+            setConversations(prev => {
+              // If active conversation is empty, inject briefing there
+              const activeCov = prev.find(c => c.id === activeId);
+              if (activeCov && activeCov.messages.length === 0) {
+                return prev.map(c => c.id !== activeId ? c : { ...c, updatedAt: Date.now(), messages: [briefingMsg] });
+              }
+              // Otherwise create a new conversation for today's briefing
+              const fresh = newConversation();
+              fresh.messages = [briefingMsg];
+              fresh.updatedAt = Date.now();
+              setActiveId(fresh.id);
+              return [fresh, ...prev];
+            });
+            AsyncStorageMod.setItem('janelle.briefedOn', today).catch(() => {});
+          }
+        })
+        .catch(() => {})
+        .finally(() => { clearTimeout(timeout); setBriefingLoading(false); briefingFetched.current = true; });
+    }).catch(() => setBriefingLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId]);
+
   useEffect(() => {
-    const timeout = setTimeout(() => setBriefingLoading(false), 8000);
-    api<Briefing & { more?: number }>(ENDPOINTS.ASSISTANT_BRIEFING)
-      .then(data => {
-        if (data?.lead) {
-          setBriefing({ lead: data.lead, items: data.items || [], suggestions: data.suggestions || [] });
-          setSuggestions(data.suggestions || []);
-          setConversations(prev => prev.map(c => {
-            if (c.id !== activeId || c.messages.length > 0) return c;
-            return { ...c, updatedAt: Date.now(), messages: [{ id: 'briefing', role: 'assistant' as const, content: data.lead, timestamp: Date.now(), isBriefing: true }] };
-          }));
-        }
-      })
-      .catch(() => {})
-      .finally(() => { clearTimeout(timeout); setBriefingLoading(false); });
+    fetchBriefing();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Re-check briefing when app returns to foreground on a new day
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active' && briefingFetched.current) {
+        const today = new Date().toDateString();
+        const AsyncStorageMod = require('@react-native-async-storage/async-storage').default;
+        AsyncStorageMod.getItem('janelle.briefedOn').then((last: string | null) => {
+          if (last !== today) fetchBriefing(true);
+        }).catch(() => {});
+      }
+    });
+    return () => sub.remove();
+  }, [fetchBriefing]);
 
   // TTS events
   useEffect(() => {
@@ -472,6 +725,35 @@ export default function ChatScreen() {
       return { ...c, messages: updated, updatedAt: Date.now(), title };
     }));
   }, [activeId]);
+
+  // Match web: auto check-in after 4pm, once per day, poll every 5 minutes — inline, silent when empty
+  const checkedInRef = useRef<string | null>(null);
+  const checkedInLoaded = useRef(false);
+  useEffect(() => {
+    if (!userId) return;
+    const AsyncStorageMod = require('@react-native-async-storage/async-storage').default;
+    AsyncStorageMod.getItem('janelle.checkedInOn').then((v: string | null) => { checkedInRef.current = v; checkedInLoaded.current = true; }).catch(() => { checkedInLoaded.current = true; });
+    const tick = () => {
+      if (!checkedInLoaded.current) return;
+      const today = new Date().toDateString();
+      if (new Date().getHours() < 16 || checkedInRef.current === today) return;
+      checkedInRef.current = today;
+      AsyncStorageMod.setItem('janelle.checkedInOn', today).catch(() => {});
+      api<{ answer?: StructuredAnswer; tasks?: CheckinTask[] } | null>(`${ENDPOINTS.ASSISTANT_CHECKIN}?hour=${new Date().getHours()}`)
+        .then(view => {
+          if (view?.tasks?.length) {
+            updateActive(msgs => [...msgs, {
+              id: `ci-${Date.now()}`, role: 'assistant' as const, content: view.answer?.lead || 'Time to check in.',
+              timestamp: Date.now(), kind: 'checkin' as const, answer: view.answer, checkin: view.tasks,
+            }]);
+          }
+        })
+        .catch(() => {});
+    };
+    tick();
+    const timer = setInterval(tick, 5 * 60_000);
+    return () => clearInterval(timer);
+  }, [userId, updateActive]);
 
   // ── Actions ──
 
@@ -496,7 +778,7 @@ export default function ChatScreen() {
 
   const listenText = async (id: string, text: string) => {
     if (!Tts) {
-      Alert.alert('Text-to-Speech', 'Speech is not available on this device.');
+      showAlert('Text-to-Speech', 'Speech is not available on this device.');
       return;
     }
     if (speakingId === id) {
@@ -507,23 +789,57 @@ export default function ChatScreen() {
     ttsStop();
     setSpeakingId(id);
     try {
-      await Tts.speak(text, {});
+      await Tts.speak(speakable(text), {});
     } catch (e) {
       setSpeakingId(null);
     }
   };
 
   const startListening = async () => {
-    if (!Voice) return;
+    if (!Voice) {
+      showAlert('Voice input', 'Voice recognition is not available on this device.');
+      return;
+    }
     try {
+      // Request mic permission on Android
+      if (Platform.OS === 'android') {
+        const { PermissionsAndroid } = require('react-native');
+        const granted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
+        if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+          showAlert('Microphone', 'Microphone permission is required for voice input.');
+          return;
+        }
+      }
       setListening(true);
-      Voice.onSpeechResults = (e: { value?: string[] }) => {
-        if (e.value?.[0]) setInput(e.value[0]);
+      setMicStatus('starting');
+      setInterim(null);
+      Voice.onSpeechStart = () => setMicStatus('listening');
+      Voice.onSpeechPartialResults = (e: { value?: string[] }) => {
+        if (e.value?.[0]) { setInput(e.value[0]); setInterim(e.value[0]); setMicStatus('hearing'); }
       };
-      Voice.onSpeechEnd = () => setListening(false);
-      Voice.onSpeechError = () => setListening(false);
+      Voice.onSpeechResults = (e: { value?: string[] }) => {
+        if (e.value?.[0]) {
+          // Echo detection: skip if mic picked up the speaker
+          if (soundsLikeEcho(e.value[0])) { setInterim(null); return; }
+          setInput(e.value[0]);
+          // In hands-free mode, auto-send when speech ends
+          if (handsFree && e.value[0].trim()) {
+            setVoicePhase('thinking');
+            setTimeout(() => sendMessageRef.current(e.value![0]), 300);
+          }
+        }
+        setMicStatus('listening');
+        setInterim(null);
+      };
+      Voice.onSpeechEnd = () => {
+        setListening(false);
+        // In hands-free mode, restart listening after response
+        // (handled by the effect below)
+      };
+      Voice.onSpeechError = () => { setListening(false); setInterim(null); };
       await Voice.start(speechLang);
-    } catch {
+    } catch (e) {
+      showAlert('Voice input', 'Voice recognition is not available on this device.');
       setListening(false);
     }
   };
@@ -531,29 +847,208 @@ export default function ChatScreen() {
   const stopListening = async () => {
     try { await Voice?.stop(); } catch {}
     setListening(false);
+    setInterim(null);
+  };
+
+  // Hands-free: send interim text immediately
+  const doneTalking = () => {
+    if (interim?.trim()) {
+      stopListening();
+      setVoicePhase('thinking');
+      sendMessageRef.current(interim);
+    }
+  };
+
+  // Hands-free: after assistant responds, speak it and restart listening
+  const handsFreeRef = useRef(handsFree);
+  handsFreeRef.current = handsFree;
+  const spokenMsgRef = useRef<string | null>(null);
+
+  // Echo detection: track what was last spoken so mic doesn't repeat it
+  const lastSpokenRef = useRef<{ text: string; endedAt: number | null }>({ text: '', endedAt: null });
+  const soundsLikeEcho = (heard: string): boolean => {
+    const { text, endedAt } = lastSpokenRef.current;
+    if (!text) return false;
+    if (endedAt !== null && Date.now() - endedAt > 2500) return false;
+    const wordsOf = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, '').split(/\s+/).filter(Boolean);
+    const pairs = (words: string[]) => words.slice(1).map((w, i) => `${words[i]} ${w}`);
+    const heardPairs = pairs(wordsOf(heard));
+    if (heardPairs.length < 3) return false;
+    const saidPairs = new Set(pairs(wordsOf(text)));
+    return heardPairs.filter(p => saidPairs.has(p)).length / heardPairs.length >= 0.85;
+  };
+
+  useEffect(() => {
+    if (!handsFree || sending || voicePhase !== 'thinking') return;
+    const last = messages[messages.length - 1];
+    if (!last || last.role !== 'assistant') return;
+    // Don't speak the same message twice
+    if (last.id === spokenMsgRef.current) return;
+    const speakText = last.answer?.speech || last.answer?.lead || last.content;
+    if (!speakText) return;
+
+    spokenMsgRef.current = last.id;
+    setVoicePhase('speaking');
+
+    (async () => {
+      if (Tts) {
+        lastSpokenRef.current = { text: speakText, endedAt: null };
+        try { await Tts.speak(speakable(speakText)); } catch {}
+        lastSpokenRef.current.endedAt = Date.now();
+      }
+      // After speaking, restart listening if still in hands-free
+      if (handsFreeRef.current) {
+        setVoicePhase('listening');
+        if (Voice) {
+          try {
+            setListening(true);
+            setMicStatus('starting');
+            setInterim(null);
+            await Voice.start(speechLang);
+          } catch { setListening(false); }
+        }
+      }
+    })();
+  }, [handsFree, sending, voicePhase, messages.length, speechLang]);
+
+  // Turn off hands-free mode cleanly
+  const endHandsFree = () => {
+    setHandsFree(false);
+    setVoicePhase('listening');
+    setInterim(null);
+    stopListening();
+    if (Tts) try { Tts.stop(); } catch {}
   };
 
   const pickFile = async () => {
-    if (!DocumentPicker) return;
+    if (!DocumentPicker?.pick) {
+      showAlert('Not available', 'File picker is not available on this device.');
+      return;
+    }
     try {
-      const result = await DocumentPicker.pick({
-        type: [DocumentPicker.types.pdf, DocumentPicker.types.images],
+      const [result] = await DocumentPicker.pick({
+        mode: 'open',
+        type: ['application/pdf', 'image/*', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'text/csv', 'text/plain'],
       });
-      const file = result[0];
-      if (!file) return;
-      const blob = await fetch(file.uri).then(r => r.blob());
+      if (!result) return;
+      setUploading(true);
+      const resp = await fetch(result.uri);
+      const blob = await resp.blob();
       const uploaded = await apiUpload<{ token: string }>(ENDPOINTS.ASSISTANT_UPLOAD, blob);
-      setAttachedFiles(prev => [...prev, { token: uploaded.token, name: file.name || 'file' }]);
+      setAttachedFiles(prev => [...prev, { token: uploaded.token, name: result.name || 'file' }]);
     } catch (err) {
-      if (!DocumentPicker?.isCancel?.(err)) {
-        // silently ignore non-cancel errors
+      if (!DocumentPicker.isCancel?.(err)) {
+        showAlert('Upload failed', (err as Error).message);
       }
+    } finally {
+      setUploading(false);
     }
   };
 
   const removeAttachment = (token: string) => {
     setAttachedFiles(prev => prev.filter(f => f.token !== token));
   };
+
+  const imagineRequest = useCallback(async (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed || sending) return;
+
+    const userMsg: ChatMessage = { id: `u-${Date.now()}`, role: 'user', content: trimmed, timestamp: Date.now(), made: 'image' };
+    updateActive(msgs => [...msgs, userMsg]);
+    setInput('');
+    setSending(true);
+    setSuggestions([]);
+    setStatusMsg('Drawing it…');
+    setComposeMode('ask');
+
+    const controller = new AbortController();
+    setAbortController(controller);
+
+    try {
+      const bodyPayload: Record<string, unknown> = { kind: 'image', prompt: trimmed };
+      if (attachedFiles.length) {
+        bodyPayload.attachments = attachedFiles.map(f => ({ token: f.token }));
+        setAttachedFiles([]);
+      }
+      const data = await api<{ answer: { lead: string; items: AnswerItem[]; speech?: string; sources: string[]; suggestions?: string[]; caveat?: string; more?: number }; startedJobs?: string[] }>(
+        ENDPOINTS.ASSISTANT_IMAGINE,
+        { method: 'POST', body: JSON.stringify(bodyPayload), signal: controller.signal },
+      );
+      const answer: StructuredAnswer = {
+        lead: data.answer.lead || '',
+        items: data.answer.items || [],
+        speech: data.answer.speech,
+        sources: data.answer.sources,
+        suggestions: data.answer.suggestions,
+        caveat: data.answer.caveat,
+        more: data.answer.more,
+      };
+      const msgId = `a-${Date.now()}`;
+      const assistantMsg: ChatMessage = {
+        id: msgId, role: 'assistant',
+        content: data.answer.lead || '',
+        timestamp: Date.now(),
+        answer,
+      };
+      updateActive(msgs => [...msgs, assistantMsg]);
+      if (data.answer.suggestions?.length) setSuggestions(data.answer.suggestions);
+
+      // Release sending so user can type while image renders
+      setSending(false);
+      setStatusMsg(null);
+      setAbortController(null);
+
+      // Poll for async jobs (image/video generation) — same as web
+      if (data.startedJobs?.length) {
+        const remainingJobs = new Set(data.startedJobs);
+        const poll = async () => {
+          let attempts = 0;
+          while (remainingJobs.size > 0 && attempts < 60 && !controller.signal.aborted) {
+            await new Promise<void>(r => setTimeout(r, 5000));
+            if (controller.signal.aborted) return;
+            for (const jobId of [...remainingJobs]) {
+              try {
+                const job = await api<{ status: string; item?: AnswerItem; error?: string }>(
+                  `${ENDPOINTS.ASSISTANT_MEDIA}/${jobId}`,
+                );
+                if (job.status === 'done' && job.item) {
+                  updateActive(msgs => msgs.map(m =>
+                    m.id === msgId
+                      ? { ...m, answer: m.answer ? { ...m.answer, items: [...m.answer.items, job.item!] } : m.answer }
+                      : m,
+                  ));
+                  remainingJobs.delete(jobId);
+                } else if (job.status !== 'pending') {
+                  updateActive(msgs => msgs.map(m =>
+                    m.id === msgId
+                      ? { ...m, answer: m.answer ? { ...m.answer, caveat: job.error || 'The image could not be made.' } : m.answer }
+                      : m,
+                  ));
+                  remainingJobs.delete(jobId);
+                }
+              } catch {}
+            }
+            attempts++;
+          }
+        };
+        poll().catch(() => {});
+      }
+      return; // skip the finally block's setSending
+    } catch (err) {
+      if ((err as Error).name !== 'AbortError') {
+        const imgFiles = attachedFiles.length ? attachedFiles.map(f => ({ name: f.name, token: f.token })) : undefined;
+        updateActive(msgs => [...msgs, {
+          id: `e-${Date.now()}`, role: 'assistant', content: (err as Error).message || 'That could not be made.',
+          timestamp: Date.now(), kind: 'error' as const,
+          retry: trimmed, retryKind: 'image' as const,
+          ...(imgFiles ? { retryFiles: imgFiles } : {}),
+        }]);
+      }
+    }
+    setSending(false);
+    setStatusMsg(null);
+    setAbortController(null);
+  }, [sending, updateActive, attachedFiles]);
 
   const downloadConversation = () => {
     if (!active) return;
@@ -573,10 +1068,65 @@ export default function ChatScreen() {
   };
 
   const sendMessage = useCallback(async (text: string) => {
+    if (composeMode === 'image') return imagineRequest(text);
     const trimmed = text.trim();
-    if (!trimmed || sending) return;
+    const currentFiles = [...attachedFiles];
 
-    const userMsg: ChatMessage = { id: `u-${Date.now()}`, role: 'user', content: trimmed, timestamp: Date.now() };
+    // Match web: allow file-only sends with auto-generated message
+    if (!trimmed && !currentFiles.length) return;
+    if (sending) return;
+
+    // Match web: intercept check-in and digest prompts to avoid a model turn
+    if (!currentFiles.length && trimmed) {
+      const asked = trimmed.replace(/[.!?]+$/, '').toLowerCase();
+      if (asked === 'do my end-of-day check-in') {
+        const userMsg: ChatMessage = { id: `u-${Date.now()}`, role: 'user', content: trimmed, timestamp: Date.now() };
+        updateActive(msgs => [...msgs, userMsg]);
+        setInput('');
+        setSending(true);
+        setStatusMsg('Loading check-in…');
+        api<{ answer?: StructuredAnswer; tasks?: CheckinTask[] } | null>(`${ENDPOINTS.ASSISTANT_CHECKIN}?hour=${new Date().getHours()}`)
+          .then(view => {
+            if (!view || !view.tasks?.length) {
+              const lead = 'Nothing to check in about today — nothing of yours was due, and nothing is blocked. Have a good evening.';
+              updateActive(msgs => [...msgs, { id: `a-${Date.now()}`, role: 'assistant', content: lead, timestamp: Date.now(), answer: { lead, items: [], sources: [], suggestions: [] } }]);
+            } else {
+              updateActive(msgs => [...msgs, {
+                id: `ci-${Date.now()}`, role: 'assistant', content: view.answer?.lead || 'How did today go?',
+                timestamp: Date.now(), kind: 'checkin' as const, answer: view.answer, checkin: view.tasks,
+              }]);
+            }
+          })
+          .catch(err => {
+            updateActive(msgs => [...msgs, { id: `e-${Date.now()}`, role: 'assistant', content: (err as Error).message, timestamp: Date.now(), kind: 'error' as const, retry: trimmed }]);
+          })
+          .finally(() => { setSending(false); setStatusMsg(null); });
+        return;
+      }
+      if (asked === "read me this morning's digest") {
+        const userMsg: ChatMessage = { id: `u-${Date.now()}`, role: 'user', content: trimmed, timestamp: Date.now() };
+        updateActive(msgs => [...msgs, userMsg]);
+        setInput('');
+        setSending(true);
+        setStatusMsg('Loading digest…');
+        try {
+          const digest = await api<StructuredAnswer | null>('/assistant/digest');
+          if (digest) {
+            updateActive(msgs => [...msgs, { id: `a-${Date.now()}`, role: 'assistant', content: digest.lead, timestamp: Date.now(), answer: digest, isBriefing: true }]);
+          } else {
+            updateActive(msgs => [...msgs, { id: `a-${Date.now()}`, role: 'assistant', content: 'No digest is available yet today.', timestamp: Date.now() }]);
+          }
+        } catch (err) {
+          updateActive(msgs => [...msgs, { id: `e-${Date.now()}`, role: 'assistant', content: `Sorry: ${(err as Error).message}`, timestamp: Date.now() }]);
+        } finally { setSending(false); setStatusMsg(null); }
+        return;
+      }
+    }
+
+    // Match web: file-only sends auto-generate a message
+    const message = trimmed || (currentFiles.length === 1 ? `Take a look at ${currentFiles[0].name}.` : `Take a look at these ${currentFiles.length} files.`);
+
+    const userMsg: ChatMessage = { id: `u-${Date.now()}`, role: 'user', content: message, timestamp: Date.now() };
     updateActive(msgs => [...msgs, userMsg]);
     setInput('');
     setSending(true);
@@ -586,14 +1136,44 @@ export default function ChatScreen() {
     const controller = new AbortController();
     setAbortController(controller);
 
+    if (currentFiles.length) setAttachedFiles([]);
+
     try {
-      const history = messages.slice(-4).map(m => ({ role: m.role, content: m.content }));
-      const pending = messages.filter(m => m.proposed?.some(p => p.status === 'waiting')).flatMap(m => m.proposed!.filter(p => p.status === 'waiting').map(p => p.key));
-      const body: Record<string, unknown> = { message: trimmed, history, page: { path: '/assistant' }, pending };
+      // Match web: 8 messages, embed proposal states, filter errors
+      // Include files from each message (not just currently attached)
+      const history = messages
+        .filter(m => m.kind !== 'error' && !m.isBriefing)
+        .slice(-8)
+        .map(m => {
+          const fileNames = (m as any).files?.length ? `\n[Attached: ${(m as any).files.map((f: any) => f.name).join(', ')}]` : '';
+          if (!m.proposed?.length) return { role: m.role, content: `${m.content}${fileNames}`.trim() || '[Attached a file]' };
+          const states = m.proposed.map(p => {
+            if (p.status === 'saved') return `[Saved — the person confirmed it: ${p.summary}]`;
+            if (p.status === 'dismissed') return `[Not saved — the person turned it down: ${p.summary}]`;
+            return `[NOT saved yet — waiting for the person to confirm: ${p.summary}]`;
+          });
+          return { role: m.role, content: `${m.content}\n\n${states.join('\n')}` };
+        });
+      // Match web: send pending proposals as { key, tool, summary, input }
+      const pending = messages
+        .flatMap(m => (m.proposed ?? []).filter(p => p.status === 'waiting').map(p => ({ key: p.key, tool: p.tool, summary: p.summary, input: p.input })))
+        .slice(-5);
+      // Match web: send recent file tokens from both user uploads and answers
+      const fileTokens: string[] = [];
+      for (const m of messages.slice(-12)) {
+        const handed = [...((m as any).files ?? []).map((f: any) => f.token), ...(m.answer?.items ?? []).map((item: any) => item.file?.token)];
+        for (const token of handed) {
+          if (!token) continue;
+          const at = fileTokens.indexOf(token);
+          if (at >= 0) fileTokens.splice(at, 1);
+          fileTokens.push(token);
+        }
+      }
+      const body: Record<string, unknown> = { message, history, page: { path: '/assistant' }, pending };
+      if (fileTokens.length) body.files = fileTokens.slice(-8).map(token => ({ token }));
       if (agents.length) body.agents = agents;
-      if (attachedFiles.length) {
-        body.attachments = attachedFiles.map(f => ({ token: f.token }));
-        setAttachedFiles([]);
+      if (currentFiles.length) {
+        body.attachments = currentFiles.map(f => ({ token: f.token }));
       }
 
       let result: AssistantTurn | null = null;
@@ -625,6 +1205,24 @@ export default function ChatScreen() {
       if (!result) throw new Error('No response received');
 
       const r = result as AssistantTurn;
+
+      // Match web: handle settled proposals (verbal "yes" confirming earlier proposals)
+      if ((r as any).settled?.length) {
+        const settled = (r as any).settled as Array<{ key: string; decision: 'confirmed' | 'cancelled' }>;
+        updateActive(msgs => msgs.map(m => {
+          const mine = settled.filter(x => x.key.startsWith(`${m.id}-`));
+          if (!mine.length) return m;
+          return {
+            ...m,
+            proposed: m.proposed?.map(p => {
+              const s = mine.find(x => x.key === p.key);
+              if (!s) return p;
+              return { ...p, status: (s.decision === 'confirmed' ? 'saved' : 'dismissed') as 'saved' | 'dismissed' };
+            }),
+          };
+        }));
+      }
+
       const answer: StructuredAnswer | undefined = r.answer
         ? { lead: r.answer.lead || '', items: r.answer.items || [], suggestions: r.answer.suggestions, sources: r.answer.sources, caveat: r.answer.caveat, more: r.answer.more, document: r.answer.document, documentTitle: r.answer.documentTitle }
         : undefined;
@@ -639,10 +1237,20 @@ export default function ChatScreen() {
       if (r.answer?.suggestions?.length) setSuggestions(r.answer.suggestions);
     } catch (err) {
       if ((err as Error).name !== 'AbortError') {
-        updateActive(msgs => [...msgs, { id: `e-${Date.now()}`, role: 'assistant', content: `Sorry: ${(err as Error).message}`, timestamp: Date.now() }]);
+        const errFiles = currentFiles.length ? currentFiles.map(f => ({ name: f.name, token: f.token })) : undefined;
+        updateActive(msgs => [...msgs, {
+          id: `e-${Date.now()}`, role: 'assistant',
+          content: (err as Error).message || 'Something went wrong',
+          timestamp: Date.now(), kind: 'error' as const,
+          retry: message, ...(errFiles ? { retryFiles: errFiles } : {}),
+        }]);
       }
     } finally { setSending(false); setStatusMsg(null); setAbortController(null); }
-  }, [messages, sending, updateActive, agents, attachedFiles]);
+  }, [messages, sending, updateActive, agents, attachedFiles, composeMode, imagineRequest]);
+
+  // Keep a ref to the latest sendMessage so voice callbacks never go stale
+  const sendMessageRef = useRef(sendMessage);
+  sendMessageRef.current = sendMessage;
 
   // Edit & re-ask a user message
   const editMessage = (msgId: string) => {
@@ -654,13 +1262,16 @@ export default function ChatScreen() {
 
   const submitEdit = () => {
     if (!editingId || !editText.trim()) { setEditingId(null); return; }
+    const original = messages.find(m => m.id === editingId);
     // Remove this message and everything after, then re-send
     updateActive(msgs => {
       const idx = msgs.findIndex(m => m.id === editingId);
       return idx >= 0 ? msgs.slice(0, idx) : msgs;
     });
     setEditingId(null);
-    sendMessage(editText);
+    // Match web: if the original was made in image mode, re-imagine instead of asking
+    if (original?.made) imagineRequest(editText);
+    else sendMessage(editText);
   };
 
   const confirmProposal = useCallback(async (messageId: string, proposalKey: string) => {
@@ -668,8 +1279,30 @@ export default function ChatScreen() {
     if (!proposal) return;
     updateActive(msgs => msgs.map(m => m.id !== messageId ? m : { ...m, proposed: m.proposed?.map(p => p.key === proposalKey ? { ...p, status: 'saving' as const } : p) }));
     try {
-      const result = await api<{ label?: string }>(ENDPOINTS.ASSISTANT_CONFIRM, { method: 'POST', body: JSON.stringify({ key: proposal.key, tool: proposal.tool, input: proposal.input }) });
-      updateActive(msgs => msgs.map(m => m.id !== messageId ? m : { ...m, proposed: m.proposed?.map(p => p.key === proposalKey ? { ...p, status: 'saved' as const, result } : p) }));
+      const saved = await api<Record<string, any>>(ENDPOINTS.ASSISTANT_CONFIRM, { method: 'POST', body: JSON.stringify({ key: proposal.key, tool: proposal.tool, input: proposal.input }) });
+      updateActive(msgs => msgs.map(m => m.id !== messageId ? m : { ...m, proposed: m.proposed?.map(p => p.key === proposalKey ? { ...p, status: 'saved' as const, result: { label: saved?.label } } : p) }));
+      // Match web: append acknowledgement message so the conversation records what was saved
+      if (saved) {
+        const isDraft = proposal.tool === 'propose_draft';
+        const isUpdate = proposal.tool === 'propose_task_update';
+        const dueStr = saved.due_date
+          ? new Date(`${saved.due_date}T12:00:00Z`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })
+          : null;
+        let lead: string;
+        let ackItems: AnswerItem[];
+        if (isDraft) {
+          lead = `Saved to Drafts${saved.to ? ` — ready to send to ${saved.to}` : ''}.`;
+          ackItems = [{ kind: 'draft', id: saved.id, title: saved.subject || proposal.summary, tone: 'good' }];
+        } else if (isUpdate) {
+          lead = `Updated${saved.assignee ? ` — it's with ${saved.assignee}` : ''}${dueStr ? `, due ${dueStr}` : ''}.`;
+          ackItems = [{ kind: 'task', id: saved.id, title: saved.title || proposal.summary, tone: 'good', fields: [{ label: 'Owner', value: saved.assignee ?? 'Unassigned' }, { label: 'Due', value: dueStr ?? '—' }, { label: 'Status', value: (saved.status || '').replace(/_/g, ' ') }] }];
+        } else {
+          lead = `Done — it's on the task board${saved.assignee ? ` for ${saved.assignee}` : ''}${dueStr ? `, due ${dueStr}` : ''}.`;
+          ackItems = [{ kind: 'task', id: saved.id, title: saved.title || proposal.summary, tone: 'good', fields: [{ label: 'Owner', value: saved.assignee ?? 'Unassigned' }, { label: 'Project', value: saved.project ?? '—' }, { label: 'Due', value: dueStr ?? '—' }] }];
+        }
+        const ackAnswer: StructuredAnswer = { lead, items: ackItems, speech: lead, sources: [], suggestions: [] };
+        updateActive(msgs => [...msgs, { id: `ack-${Date.now()}`, role: 'assistant', content: lead, timestamp: Date.now(), answer: ackAnswer }]);
+      }
     } catch (err) {
       updateActive(msgs => msgs.map(m => m.id !== messageId ? m : { ...m, proposed: m.proposed?.map(p => p.key === proposalKey ? { ...p, status: 'dismissed' as const, result: { label: (err as Error).message } } : p) }));
     }
@@ -680,11 +1313,83 @@ export default function ChatScreen() {
   }, [updateActive]);
 
   // ── Conversation management ──
-  const handleNewConversation = () => { const c = newConversation(); setConversations(prev => [c, ...prev]); setActiveId(c.id); setSuggestions([]); };
-  const handleSelectConversation = (id: string) => { setActiveId(id); setSuggestions([]); };
+  const handleNewConversation = () => {
+    // Match web: abort pending, stop speaking
+    abortController?.abort();
+    setAbortController(null);
+    setSending(false);
+    setStatusMsg(null);
+    if (Tts) try { Tts.stop(); } catch {}
+
+    const c = newConversation();
+    setConversations(prev => [c, ...prev]);
+    setActiveId(c.id);
+    setSuggestions([]);
+    setComposeMode('ask');
+    // Match web: every new conversation opens with the briefing
+    const now = new Date();
+    const today = now.toDateString();
+    const cached = briefingCacheRef.current;
+    if (cached && cached.day === today && cached.hour === now.getHours() && Date.now() - cached.at < BRIEFING_TTL_MS) {
+      // Reuse cached briefing
+      const briefingMsg: ChatMessage = { id: 'briefing', role: 'assistant', content: cached.data.lead, timestamp: Date.now(), isBriefing: true };
+      setBriefing(cached.data);
+      setSuggestions(cached.data.suggestions || []);
+      setConversations(prev => prev.map(cv => cv.id !== c.id ? cv : { ...cv, updatedAt: Date.now(), messages: [briefingMsg] }));
+    } else {
+      // Fetch fresh briefing for this conversation
+      api<Briefing & { more?: number }>(`${ENDPOINTS.ASSISTANT_BRIEFING}?hour=${now.getHours()}`)
+        .then(data => {
+          if (data?.lead) {
+            briefingCacheRef.current = { day: today, hour: now.getHours(), at: Date.now(), data: { lead: data.lead, items: data.items || [], suggestions: data.suggestions || [] } };
+            setBriefing({ lead: data.lead, items: data.items || [], suggestions: data.suggestions || [] });
+            setSuggestions(data.suggestions || []);
+            const briefingMsg: ChatMessage = { id: 'briefing', role: 'assistant', content: data.lead, timestamp: Date.now(), isBriefing: true };
+            setConversations(prev => prev.map(cv => cv.id !== c.id ? cv : { ...cv, updatedAt: Date.now(), messages: [briefingMsg] }));
+          }
+        })
+        .catch(() => {});
+    }
+  };
+  const handleSelectConversation = (id: string) => {
+    if (id === activeId) return;
+    // Match web: abort pending, stop speaking
+    abortController?.abort();
+    setAbortController(null);
+    setSending(false);
+    setStatusMsg(null);
+    if (Tts) try { Tts.stop(); } catch {}
+    // Match web: remove empty conversation when switching away from it
+    setConversations(prev => {
+      const leaving = prev.find(c => c.id === activeId);
+      return leaving && leaving.messages.length === 0 ? prev.filter(c => c.id !== activeId) : prev;
+    });
+    setActiveId(id);
+    setSuggestions([]);
+  };
   const handlePinConversation = (id: string) => { setConversations(prev => prev.map(c => c.id === id ? { ...c, pinned: !c.pinned } : c)); };
-  const handleRenameConversation = (id: string, title: string) => { setConversations(prev => prev.map(c => c.id === id ? { ...c, title } : c)); };
+  const handleRenameConversation = (id: string, title: string) => {
+    // Match web: sanitize whitespace, cap at 80 chars, null if empty
+    const clean = title.replace(/\s+/g, ' ').trim().slice(0, 80) || null;
+    setConversations(prev => prev.map(c => c.id === id ? { ...c, title: clean } : c));
+  };
   const handleDeleteConversation = (id: string) => {
+    // Match web: abort if deleting active, stop speaking
+    if (id === activeId) {
+      abortController?.abort();
+      setAbortController(null);
+      setSending(false);
+      setStatusMsg(null);
+      if (Tts) try { Tts.stop(); } catch {}
+    }
+    // Match web: delete attached files from storage
+    const doomed = conversations.find(c => c.id === id);
+    if (doomed) {
+      const tokens = doomed.messages.flatMap(m => ((m as any).files ?? []).map((f: any) => f.token));
+      if (tokens.length) {
+        api('/assistant/uploads/forget', { method: 'POST', body: JSON.stringify({ tokens }) }).catch(() => {});
+      }
+    }
     setConversations(prev => {
       const f = prev.filter(c => c.id !== id);
       if (id === activeId) { if (f.length) setActiveId(f[0].id); else { const c = newConversation(); f.push(c); setActiveId(c.id); } }
@@ -758,6 +1463,114 @@ export default function ChatScreen() {
           <View style={{ borderLeftWidth: 2, borderLeftColor: C.warn, paddingLeft: 10, marginTop: 4 }}>
             <Text style={{ fontSize: 12.5, color: C.inkSoft }}>{answer.caveat}</Text>
           </View>
+        )}
+      </View>
+    );
+  };
+
+  // ── Inline check-in (matches web's CheckinAnswerView) ──
+  const [checkinBusy, setCheckinBusy] = useState<string | null>(null);
+  const [checkinAsking, setCheckinAsking] = useState<string | null>(null);
+  const [checkinWhy, setCheckinWhy] = useState('');
+
+  const recordCheckinOutcome = async (messageId: string, task: CheckinTask, outcome: CheckinOutcome, note?: string) => {
+    setCheckinBusy(task.id);
+    try {
+      await api(ENDPOINTS.ASSISTANT_CHECKIN, { method: 'POST', body: JSON.stringify({ task_id: task.id, outcome, note: note?.trim() || null }) });
+      updateActive(msgs => msgs.map(m =>
+        m.id !== messageId || !m.checkin ? m
+          : { ...m, checkin: m.checkin.map(t => t.id === task.id ? { ...t, outcome, outcomeNote: note?.trim() || null } : t) },
+      ));
+      setCheckinAsking(null);
+      setCheckinWhy('');
+    } catch (err) {
+      showAlert('Error', (err as Error).message);
+    } finally { setCheckinBusy(null); }
+  };
+
+  const renderCheckinTasks = (message: ChatMessage) => {
+    const tasks = message.checkin ?? [];
+    if (!tasks.length) return null;
+    const OUTCOME_LABEL: Record<string, string> = { done: 'Done', blocked: 'Blocked', tomorrow: 'Rolls to tomorrow' };
+    const OUTCOME_COLOR: Record<string, string> = { done: C.good, blocked: C.crit, tomorrow: C.warn };
+    const shortDay = (iso: string) => new Date(`${iso}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+
+    const groups: { key: string; label: string; hint?: string }[] = [
+      { key: 'open', label: 'Still open', hint: 'Done, blocked, or tomorrow?' },
+      { key: 'blocked', label: 'Blocked', hint: 'Still stuck?' },
+      { key: 'tomorrow', label: 'Due tomorrow' },
+      { key: 'done', label: 'Finished today' },
+    ];
+
+    return (
+      <View style={{ marginTop: 12, gap: 10 }}>
+        {groups.map(g => {
+          const rows = tasks.filter(t => (t.bucket || 'open') === g.key);
+          if (!rows.length) return null;
+          return (
+            <View key={g.key}>
+              <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6, marginBottom: 6 }}>
+                <Text style={{ fontSize: 10.5, fontWeight: '700', letterSpacing: 0.8, color: C.inkFaint, textTransform: 'uppercase' }}>{g.label} ({rows.length})</Text>
+                {g.hint && <Text style={{ fontSize: 11.5, color: C.inkFaint }}>{g.hint}</Text>}
+              </View>
+              <View style={{ borderRadius: 12, borderWidth: 1, borderColor: C.line, backgroundColor: C.surface, overflow: 'hidden' }}>
+                {rows.map((t, ti) => {
+                  const meta = [t.project, t.due ? `due ${shortDay(t.due)}` : null].filter(Boolean).join(' · ');
+                  const settled = t.outcome ?? null;
+                  const isAsking = checkinAsking === t.id;
+                  return (
+                    <View key={t.id} style={[{ paddingHorizontal: 14, paddingVertical: 10 }, ti > 0 && { borderTopWidth: 1, borderTopColor: C.line }]}>
+                      <Text style={[{ fontSize: 13.5, fontWeight: '600', color: C.ink, lineHeight: 20 }, (settled === 'done' || g.key === 'done') && { textDecorationLine: 'line-through', color: C.inkSoft }]}>{t.title}</Text>
+                      {meta ? <Text style={{ fontSize: 12, color: C.inkSoft, marginTop: 2 }}>{meta}</Text> : null}
+                      {t.note && !settled && <Text style={{ fontSize: 12, color: C.inkSoft, marginTop: 4, borderLeftWidth: 2, borderLeftColor: C.crit + '99', paddingLeft: 8 }}>{t.note}</Text>}
+                      {settled && t.outcomeNote ? <Text style={{ fontSize: 12, color: C.inkSoft, marginTop: 4, borderLeftWidth: 2, borderLeftColor: C.brass + '99', paddingLeft: 8 }}>{t.outcomeNote}</Text> : null}
+                      {g.key === 'done' ? (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 6 }}>
+                          <Icon name="checkmark-circle" size={14} color={C.good} />
+                          <Text style={{ fontSize: 11.5, fontWeight: '600', color: C.good }}>Done</Text>
+                        </View>
+                      ) : settled ? (
+                        <View style={{ marginTop: 6, alignSelf: 'flex-start', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10, backgroundColor: (OUTCOME_COLOR[settled] || C.inkFaint) + '1A' }}>
+                          <Text style={{ fontSize: 11.5, fontWeight: '600', color: OUTCOME_COLOR[settled] || C.inkFaint }}>{OUTCOME_LABEL[settled] || settled}</Text>
+                        </View>
+                      ) : (
+                        <View style={{ flexDirection: 'row', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                          <Pressable style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6, borderWidth: 1, borderColor: C.line, backgroundColor: C.sunk }} disabled={checkinBusy === t.id} onPress={() => recordCheckinOutcome(message.id, t, 'done')}>
+                            <Text style={{ fontSize: 12.5, fontWeight: '600', color: C.inkSoft }}>Done</Text>
+                          </Pressable>
+                          <Pressable style={[{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6, borderWidth: 1, borderColor: C.line, backgroundColor: C.sunk }, isAsking && { borderColor: C.crit + '80' }]} disabled={checkinBusy === t.id} onPress={() => { setCheckinAsking(isAsking ? null : t.id); setCheckinWhy(''); }}>
+                            <Text style={[{ fontSize: 12.5, fontWeight: '600', color: C.inkSoft }, isAsking && { color: C.crit }]}>{g.key === 'blocked' ? 'Still blocked' : 'Blocked'}</Text>
+                          </Pressable>
+                          <Pressable style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6 }} disabled={checkinBusy === t.id} onPress={() => recordCheckinOutcome(message.id, t, 'tomorrow')}>
+                            <Text style={{ fontSize: 12.5, fontWeight: '600', color: C.inkFaint }}>Tomorrow</Text>
+                          </Pressable>
+                        </View>
+                      )}
+                      {isAsking && !settled && (
+                        <View style={{ flexDirection: 'row', gap: 8, marginTop: 8, alignItems: 'flex-end' }}>
+                          <TextInput
+                            autoFocus
+                            style={{ flex: 1, minHeight: 36, borderRadius: 8, borderWidth: 1, borderColor: C.line, backgroundColor: C.sunk, paddingHorizontal: 10, paddingVertical: 6, fontSize: 13, color: C.ink }}
+                            placeholder="What is in the way?"
+                            placeholderTextColor={C.inkFaint}
+                            value={checkinWhy}
+                            onChangeText={setCheckinWhy}
+                            multiline
+                          />
+                          <Pressable style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 6, backgroundColor: C.brass }} disabled={checkinBusy === t.id} onPress={() => recordCheckinOutcome(message.id, t, 'blocked', checkinWhy)}>
+                            <Text style={{ fontSize: 12.5, fontWeight: '600', color: '#fff' }}>{checkinBusy === t.id ? 'Saving…' : 'Save'}</Text>
+                          </Pressable>
+                        </View>
+                      )}
+                    </View>
+                  );
+                })}
+              </View>
+            </View>
+          );
+        })}
+        {tasks.some(t => !t.outcome && t.bucket !== 'done') && (
+          <Text style={{ fontSize: 12.5, color: C.inkFaint }}>Anything not answered stays as it is.</Text>
         )}
       </View>
     );
@@ -852,19 +1665,31 @@ export default function ChatScreen() {
           <View style={s.assistantWrap}>
             <View style={s.avatar}><Text style={s.avatarText}>J</Text></View>
             <View style={s.assistantRight}>
-              <View style={[s.assistantContentBubble, isBriefing && s.briefingContentBubble, item.content.startsWith('Sorry:') && s.errorContentBubble]}>
+              <View style={[s.assistantContentBubble, isBriefing && s.briefingContentBubble, item.kind === 'error' && s.errorContentBubble]}>
                 {isBriefing && <Text style={s.briefingLabel}>YOUR BRIEFING</Text>}
+                {item.kind === 'checkin' && <Text style={s.briefingLabel}>END-OF-DAY CHECK-IN</Text>}
                 <Text style={[s.messageText, s.assistantText]}>{item.answer?.lead || item.content}</Text>
                 {isBriefing && !item.answer?.items?.length && renderBriefingItems()}
                 {item.answer && item.answer.items?.length > 0 && (
                   isBriefing ? renderBriefingFromAnswer(item.answer) : <AnswerItems answer={item.answer} />
                 )}
+                {item.kind === 'checkin' && item.checkin?.length ? renderCheckinTasks(item) : null}
                 {renderProposals(item)}
               </View>
-              {item.content.startsWith('Sorry:') && (
+              {item.kind === 'error' && (
                 <Pressable style={s.retryBtn} onPress={() => {
-                  const lastUser = messages.slice(0, messages.indexOf(item)).reverse().find(m => m.role === 'user');
-                  if (lastUser) { updateActive(msgs => msgs.filter(m => m.id !== item.id)); sendMessage(lastUser.content); }
+                  updateActive(msgs => msgs.filter(m => m.id !== item.id));
+                  if (item.retryKind) {
+                    // Re-imagine with original files
+                    if (item.retryFiles?.length) setAttachedFiles(item.retryFiles.map(f => ({ token: f.token, name: f.name })));
+                    imagineRequest(item.retry || '');
+                  } else if (item.retry) {
+                    if (item.retryFiles?.length) setAttachedFiles(item.retryFiles.map(f => ({ token: f.token, name: f.name })));
+                    sendMessage(item.retry);
+                  } else {
+                    const lastUser = messages.slice(0, messages.indexOf(item)).reverse().find(m => m.role === 'user');
+                    if (lastUser) sendMessage(lastUser.content);
+                  }
                 }}>
                   <Text style={s.retryBtnText}>Try again</Text>
                 </Pressable>
@@ -896,7 +1721,7 @@ export default function ChatScreen() {
           <Icon name="sparkles" size={26} color={C.brassDeep} />
         </View>
         <Text style={s.emptyTitle}>What would you like to know about the studio?</Text>
-        <Text style={s.emptySubtitle}>Ask a question in plain English. Jenny searches the studio's tasks, mail, projects and Drive and explains what she finds, naming where each answer came from.</Text>
+        <Text style={s.emptySubtitle}>Ask a question in plain English. Janelle searches the studio's tasks, mail, projects and Drive and explains what she finds, naming where each answer came from.</Text>
         <View style={s.quickCards}>
           {QUICK_CARDS.map(c => (
             <Pressable key={c.question} style={s.quickCard} onPress={() => sendMessage(c.question)}>
@@ -940,16 +1765,28 @@ export default function ChatScreen() {
     <View style={s.container}>
       {/* Header */}
       <View style={[s.header, { paddingTop: insets.top + 10 }]}>
-        <Text style={s.headerTitle}>Jenny</Text>
+        <Text style={s.headerTitle}>Janelle</Text>
         <View style={s.headerRight}>
           <Pressable style={s.headerChip} onPress={() => setHistoryOpen(true)}>
-            <Text style={s.headerChipText}>Conversations{convCount > 0 ? ` ${convCount}` : ''}</Text>
+            <Icon name="time-outline" size={14} color={C.inkSoft} />
+            <Text style={s.headerChipText}>Conversations</Text>
+            {convCount > 0 && (
+              <View style={s.headerBadge}>
+                <Text style={s.headerBadgeText}>{convCount}</Text>
+              </View>
+            )}
           </Pressable>
           <Pressable style={[s.headerChip, agents.length > 0 && s.headerChipActive]} onPress={() => setAgentsOpen(true)}>
-            <Text style={[s.headerChipText, agents.length > 0 && s.headerChipTextActive]}>Agents{agents.length > 0 ? ` ${agents.length}` : ''}</Text>
+            <Icon name="people-outline" size={14} color={agents.length > 0 ? C.brassLight : C.inkSoft} />
+            <Text style={[s.headerChipText, agents.length > 0 && s.headerChipTextActive]}>Agents</Text>
+            {agents.length > 0 && (
+              <View style={s.headerBadgeActive}>
+                <Text style={s.headerBadgeActiveText}>{agents.length}</Text>
+              </View>
+            )}
           </Pressable>
           <Pressable style={s.settingsBtn} onPress={() => {
-            Alert.alert('Logout', 'Are you sure you want to logout?', [
+            showAlert('Logout', 'Are you sure you want to logout?', [
               { text: 'Cancel', style: 'cancel' },
               { text: 'Logout', style: 'destructive', onPress: () => signOut() },
             ]);
@@ -997,7 +1834,28 @@ export default function ChatScreen() {
               <Icon name="attach-outline" size={18} color={C.inkSoft} />
               <View style={{ flex: 1 }}>
                 <Text style={s.plusMenuLabel}>Attach a file</Text>
-                <Text style={s.plusMenuHint}>PDF or image</Text>
+                <Text style={s.plusMenuHint}>PDF, image, spreadsheet, document</Text>
+              </View>
+            </Pressable>
+            <View style={s.plusMenuDivider} />
+            <Pressable style={s.plusMenuItem} onPress={() => { setPlusMenuOpen(false); setComposeMode(composeMode === 'image' ? 'ask' : 'image'); }}>
+              <Icon name="image-outline" size={18} color={composeMode === 'image' ? C.brassLight : C.inkSoft} />
+              <View style={{ flex: 1 }}>
+                <Text style={s.plusMenuLabel}>{composeMode === 'image' ? 'Back to asking' : 'Make an image'}</Text>
+                <Text style={s.plusMenuHint}>
+                  {composeMode === 'image'
+                    ? 'Janelle answers from the studio\'s records, mail and Drive'
+                    : 'Drawn from your words · no tokens spent'}
+                </Text>
+              </View>
+              {composeMode === 'image' && <Icon name="checkmark" size={16} color={C.brassLight} />}
+            </Pressable>
+            <View style={s.plusMenuDivider} />
+            <Pressable style={s.plusMenuItem} onPress={() => { setPlusMenuOpen(false); setCheckinOpen(true); }}>
+              <Icon name="checkbox-outline" size={18} color={C.inkSoft} />
+              <View style={{ flex: 1 }}>
+                <Text style={s.plusMenuLabel}>End-of-day check-in</Text>
+                <Text style={s.plusMenuHint}>Review today's tasks and report progress</Text>
               </View>
             </Pressable>
             <View style={s.plusMenuDivider} />
@@ -1011,6 +1869,66 @@ export default function ChatScreen() {
           </View>
         )}
 
+        {/* Image mode indicator */}
+        {composeMode === 'image' && (
+          <Pressable style={s.imageModeBar} onPress={() => setComposeMode('ask')}>
+            <Icon name="image-outline" size={14} color={C.brassLight} />
+            <Text style={s.imageModeText}>Making an image — tap to go back to asking</Text>
+          </Pressable>
+        )}
+
+        {/* Voice bar — hands-free mode (same as web's VoiceBar) */}
+        {handsFree && (
+          <View style={s.voiceBar}>
+            <View style={[s.voiceOrb, voicePhase === 'listening' && s.voiceOrbListening, voicePhase === 'speaking' && s.voiceOrbSpeaking, voicePhase === 'thinking' && s.voiceOrbThinking]}>
+              {voicePhase === 'listening' ? (
+                <Icon name="mic" size={24} color="#fff" />
+              ) : voicePhase === 'speaking' ? (
+                <Text style={s.voiceOrbText}>J</Text>
+              ) : (
+                <Icon name="ellipsis-horizontal" size={24} color="#fff" />
+              )}
+            </View>
+            <Text style={s.voiceBarLabel}>
+              {voicePhase === 'listening'
+                ? (micStatus === 'hearing' ? 'Hearing you — keep going' : micStatus === 'starting' ? 'Starting the microphone…' : 'Listening — go ahead')
+                : voicePhase === 'speaking'
+                  ? 'Speaking'
+                  : `${statusMsg || 'Thinking'}…`}
+            </Text>
+            {voicePhase === 'listening' && interim && (
+              <Text style={s.voiceBarInterim} numberOfLines={3}>"{interim}"</Text>
+            )}
+            <View style={s.voiceBarActions}>
+              {voicePhase === 'listening' && interim && (
+                <Pressable style={s.voiceBarPrimary} onPress={doneTalking}>
+                  <Text style={s.voiceBarPrimaryText}>Send now</Text>
+                </Pressable>
+              )}
+              {voicePhase === 'speaking' && Tts && (
+                <Pressable style={s.voiceBarSecondary} onPress={() => { try { Tts.stop(); } catch {} setVoicePhase('listening'); startListening(); }}>
+                  <Text style={s.voiceBarSecondaryText}>Skip</Text>
+                </Pressable>
+              )}
+              <Pressable style={s.voiceBarSecondary} onPress={endHandsFree}>
+                <Text style={s.voiceBarSecondaryText}>Type instead</Text>
+              </Pressable>
+            </View>
+          </View>
+        )}
+
+        {/* Listening indicator — matches web's mic meter */}
+        {listening && !handsFree && (
+          <View style={s.listeningBar}>
+            <View style={s.listeningMeter}>
+              <View style={[s.listeningMeterFill, micStatus === 'hearing' ? s.listeningMeterHearing : micStatus === 'listening' ? s.listeningMeterActive : s.listeningMeterStarting]} />
+            </View>
+            <Text style={[s.listeningText, micStatus === 'hearing' && { color: C.good }]}>
+              {micStatus === 'starting' ? 'Starting the microphone…' : micStatus === 'hearing' ? 'Hearing you' : 'Listening…'}
+            </Text>
+          </View>
+        )}
+
         {/* Input bar */}
         <View style={[s.inputWrap, { paddingBottom: Math.max(insets.bottom, 10) }]}>
           <View style={s.inputPill}>
@@ -1019,8 +1937,8 @@ export default function ChatScreen() {
             </Pressable>
             <TextInput
               style={s.textInput}
-              placeholder={`Ask Jenny anything…`}
-              placeholderTextColor={C.inkFaint}
+              placeholder={listening ? (micStatus === 'hearing' ? 'Hearing you…' : 'Listening…') : composeMode === 'image' ? 'Describe the picture — the room, the materials, the light' : 'Ask Janelle anything…'}
+              placeholderTextColor={listening ? C.crit : C.inkFaint}
               value={input} onChangeText={setInput}
               multiline maxLength={2000} editable={!sending}
               onSubmitEditing={() => sendMessage(input)} blurOnSubmit={false}
@@ -1036,15 +1954,70 @@ export default function ChatScreen() {
               </Pressable>
             ) : (
               <Pressable
-                style={[s.sendBtn, !input.trim() && s.sendBtnDisabled]}
+                style={[s.sendBtn, (!input.trim() && !attachedFiles.length) && s.sendBtnDisabled]}
                 onPress={() => sendMessage(input)}
-                disabled={!input.trim()}>
+                disabled={!input.trim() && !attachedFiles.length}>
                 <Icon name="arrow-forward" size={18} color="#fff" />
               </Pressable>
             )}
           </View>
+          {/* Talk mode button — right of input pill, same as web */}
+          {Voice && (
+            <Pressable
+              style={[s.talkBtn, handsFree && s.talkBtnActive]}
+              onPress={async () => {
+                if (handsFree) { endHandsFree(); return; }
+                if (!Voice) { showAlert('Voice', 'Voice recognition is not available.'); return; }
+                try {
+                  if (Platform.OS === 'android') {
+                    const { PermissionsAndroid } = require('react-native');
+                    const granted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
+                    if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+                      showAlert('Microphone', 'Microphone permission is required for talk mode.');
+                      return;
+                    }
+                  }
+                  setHandsFree(true);
+                  setVoicePhase('listening');
+                  setListening(true);
+                  setMicStatus('starting');
+                  setInterim(null);
+                  Voice.onSpeechStart = () => setMicStatus('listening');
+                  Voice.onSpeechPartialResults = (e: { value?: string[] }) => {
+                    if (e.value?.[0]) { setInput(e.value[0]); setInterim(e.value[0]); setMicStatus('hearing'); }
+                  };
+                  Voice.onSpeechResults = (e: { value?: string[] }) => {
+                    if (e.value?.[0]) {
+                      if (soundsLikeEcho(e.value[0])) { setInterim(null); return; }
+                      setInput(e.value[0]);
+                      setVoicePhase('thinking');
+                      setTimeout(() => sendMessageRef.current(e.value![0]), 300);
+                    }
+                    setInterim(null);
+                  };
+                  Voice.onSpeechEnd = () => { setListening(false); setInterim(null); };
+                  Voice.onSpeechError = () => { setListening(false); setInterim(null); };
+                  await Voice.start(speechLang);
+                } catch (e) {
+                  showAlert('Talk mode', 'Voice recognition is not available on this device.');
+                  setHandsFree(false);
+                  setListening(false);
+                }
+              }}>
+              <Icon name="pulse-outline" size={20} color={handsFree ? C.brassLight : C.inkSoft} />
+            </Pressable>
+          )}
         </View>
       </KeyboardAvoidingView>
+
+      {/* Upload/Generate loader overlay */}
+      {(uploading || (sending && statusMsg === 'Drawing it…')) && (
+        <View style={s.uploadOverlay}>
+          <View style={s.uploadBox}>
+            <Loader dotsOnly message={uploading ? 'Uploading file…' : 'Generating image…'} />
+          </View>
+        </View>
+      )}
 
       {/* Modals */}
       <Modal visible={historyOpen} animationType="slide" presentationStyle="pageSheet">
@@ -1066,6 +2039,8 @@ export default function ChatScreen() {
         <SettingsScreen visible={settingsOpen} onClose={() => setSettingsOpen(false)} />
       </Modal>
 
+      <CheckIn visible={checkinOpen} onClose={() => setCheckinOpen(false)} />
+
       <AgentPicker
         visible={agentsOpen}
         selected={agents}
@@ -1075,9 +2050,6 @@ export default function ChatScreen() {
         onClose={() => setAgentsOpen(false)}
       />
 
-      {/* {checkinOpen && <CheckIn visible={checkinOpen} onClose={() => setCheckinOpen(false)} />}
-      {imagineOpen && <Imagine visible={imagineOpen} onClose={() => setImagineOpen(false)} />}
-      {priorityOpen && <TopPriorityActions visible={priorityOpen} onClose={() => setPriorityOpen(false)} />} */}
 
       {/* Data page modals */}
       {dataPage && (
@@ -1130,12 +2102,12 @@ export default function ChatScreen() {
             </View>
             <View style={s.menuDivider} />
             {[
-              { label: 'Jenny', icon: 'chatbubble-ellipses-outline', action: () => { setMenuOpen(false); setPriorityOpen(false); setDataPage(null); } },
+              { label: 'Janelle', icon: 'chatbubble-ellipses-outline', action: () => { setMenuOpen(false); setPriorityOpen(false); setDataPage(null); } },
               { label: 'Tasks', icon: 'checkmark-circle-outline', action: () => { setMenuOpen(false); setDataPage('tasks'); } },
               { label: 'Inbox', icon: 'mail-outline', action: () => { setMenuOpen(false); setDataPage('inbox'); } },
               { label: 'Drafts', icon: 'create-outline', action: () => { setMenuOpen(false); setDataPage('drafts'); } },
               { label: 'Open in Web', icon: 'open-outline', action: () => { setMenuOpen(false); const url = Config.API_BASE_URL || ''; if (url) require('react-native').Linking.openURL(url); } },
-              { label: 'Sign Out', icon: 'log-out-outline', action: () => { setMenuOpen(false); Alert.alert('Sign out', 'Are you sure?', [{ text: 'Cancel', style: 'cancel' }, { text: 'Sign out', style: 'destructive', onPress: signOut }]); } },
+              { label: 'Sign Out', icon: 'log-out-outline', action: () => { setMenuOpen(false); showAlert('Sign out', 'Are you sure?', [{ text: 'Cancel', style: 'cancel' }, { text: 'Sign out', style: 'destructive', onPress: signOut }]); } },
             ].map(item => (
               <Pressable key={item.label} style={s.menuItem} onPress={item.action}>
                 <Icon name={item.icon} size={18} color={C.inkSoft} style={{ marginRight: 10 }} />
@@ -1154,10 +2126,14 @@ const s = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: C.line, backgroundColor: C.nav },
   headerTitle: { fontSize: 20, fontWeight: '700', color: C.ink },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  headerChip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: C.surface, borderWidth: 1, borderColor: C.line },
-  headerChipActive: { borderColor: C.brass, backgroundColor: 'rgba(37,99,235,0.12)' },
+  headerChip: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20, backgroundColor: C.surface, borderWidth: 1, borderColor: C.line },
+  headerChipActive: { borderColor: 'rgba(37,99,235,0.4)', backgroundColor: 'rgba(37,99,235,0.12)' },
   headerChipText: { fontSize: 12, color: C.inkSoft, fontWeight: '500' },
   headerChipTextActive: { color: C.brassLight },
+  headerBadge: { minWidth: 18, height: 18, borderRadius: 9, backgroundColor: C.sunk, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5 },
+  headerBadgeText: { fontSize: 10.5, fontWeight: '700', color: C.inkFaint },
+  headerBadgeActive: { minWidth: 18, height: 18, borderRadius: 9, backgroundColor: C.brass, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5 },
+  headerBadgeActiveText: { fontSize: 10.5, fontWeight: '700', color: '#fff' },
   settingsBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: C.surface, borderWidth: 1.5, borderColor: C.line, alignItems: 'center', justifyContent: 'center' },
   hamburger: { width: 16, height: 12, justifyContent: 'space-between' },
   hamburgerLine: { width: 16, height: 2, borderRadius: 1, backgroundColor: C.inkSoft },
@@ -1204,6 +2180,32 @@ const s = StyleSheet.create({
   suggestionsWrap: { flexDirection: 'row', flexWrap: 'wrap', paddingLeft: 36, paddingRight: 16, paddingTop: 4, paddingBottom: 8, gap: 6 },
   suggestionChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, backgroundColor: C.surface, borderWidth: 1, borderColor: C.line },
   suggestionText: { fontSize: 12.5, color: C.inkSoft },
+  imageModeBar: { flexDirection: 'row', alignItems: 'center', gap: 6, marginHorizontal: 8, marginBottom: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20, backgroundColor: 'rgba(37,99,235,0.10)' },
+  imageModeText: { fontSize: 12, fontWeight: '500', color: C.brassLight },
+  listeningBar: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 8, marginBottom: 6, paddingHorizontal: 12, paddingVertical: 7 },
+  listeningMeter: { flex: 1, height: 4, borderRadius: 2, backgroundColor: C.sunk, overflow: 'hidden' },
+  listeningMeterFill: { height: '100%', borderRadius: 2, width: '30%' },
+  listeningMeterStarting: { backgroundColor: C.inkFaint, width: '15%' },
+  listeningMeterActive: { backgroundColor: C.crit, width: '40%' },
+  listeningMeterHearing: { backgroundColor: C.good, width: '80%' },
+  listeningText: { fontSize: 11, color: C.inkFaint, flexShrink: 0 },
+  talkBtn: { width: 48, height: 48, borderRadius: 24, borderWidth: 1, borderColor: C.line, backgroundColor: C.surface, alignItems: 'center', justifyContent: 'center' },
+  talkBtnActive: { borderColor: 'rgba(37,99,235,0.4)', backgroundColor: 'rgba(37,99,235,0.15)' },
+  voiceBar: { alignItems: 'center', paddingVertical: 20, paddingHorizontal: 16, borderTopWidth: 1, borderTopColor: C.line, gap: 12 },
+  voiceOrb: { width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center', backgroundColor: C.inkFaint },
+  voiceOrbListening: { backgroundColor: C.crit },
+  voiceOrbSpeaking: { backgroundColor: C.brass },
+  voiceOrbThinking: { backgroundColor: C.inkFaint },
+  voiceOrbText: { fontSize: 24, fontWeight: '700', color: '#fff' },
+  voiceBarLabel: { fontSize: 14, fontWeight: '500', color: C.ink, textAlign: 'center' },
+  voiceBarInterim: { fontSize: 13, fontStyle: 'italic', color: C.inkSoft, textAlign: 'center', paddingHorizontal: 16 },
+  voiceBarActions: { flexDirection: 'row', gap: 8 },
+  voiceBarPrimary: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8, backgroundColor: C.brass },
+  voiceBarPrimaryText: { fontSize: 13, fontWeight: '600', color: '#fff' },
+  voiceBarSecondary: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8, backgroundColor: C.surface, borderWidth: 1, borderColor: C.line },
+  voiceBarSecondaryText: { fontSize: 13, fontWeight: '600', color: C.inkSoft },
+  uploadOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', zIndex: 100 },
+  uploadBox: { paddingHorizontal: 32, paddingVertical: 24, borderRadius: 16, backgroundColor: C.surface, borderWidth: 1, borderColor: C.line },
   plusMenu: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.line, borderRadius: 16, marginHorizontal: 8, marginBottom: 8, paddingVertical: 4, overflow: 'hidden' },
   plusMenuItem: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 10 },
   plusMenuIcon: { fontSize: 16 },

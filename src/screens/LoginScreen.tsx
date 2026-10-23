@@ -1,3 +1,4 @@
+import { showAlert } from '../components/DarkAlert';
 import React, { useEffect, useState } from 'react';
 import {
   Alert,
@@ -31,7 +32,7 @@ const C = {
   line: '#2C3A52',
   lineSoft: '#222F44',
   brass: '#2563EB',
-  brassDeep: '#1D4ED8',
+  brassDeep: '#60A5FA',
   nav: '#0F1B2D',
   good: '#4ADE80',
   crit: '#F87171',
@@ -229,7 +230,7 @@ export default function LoginScreen() {
           <Pressable
             style={styles.googleBtn}
             onPress={() => {
-              Alert.alert(
+              showAlert(
                 'Coming Soon',
                 'Google sign-in is currently under development. Please use email and password to sign in.',
                 [{ text: 'Got it' }],

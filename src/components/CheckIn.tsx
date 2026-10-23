@@ -1,3 +1,4 @@
+import { showAlert } from '../components/DarkAlert';
 import React, { useEffect, useState } from 'react';
 import {
   Alert, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
@@ -73,7 +74,7 @@ export default function CheckIn({ visible, onClose }: Props) {
       });
       setDone(true);
     } catch (e) {
-      Alert.alert('Error', (e as Error).message);
+      showAlert('Error', (e as Error).message);
     } finally {
       setSubmitting(false);
     }

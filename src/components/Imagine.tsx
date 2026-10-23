@@ -1,3 +1,4 @@
+import { showAlert } from '../components/DarkAlert';
 import React, { useEffect, useState } from 'react';
 import {
   Alert, Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
@@ -33,7 +34,7 @@ export default function Imagine({ visible, onClose }: Props) {
     try {
       const res = await api<any>(ENDPOINTS.ASSISTANT_IMAGINE, {
         method: 'POST',
-        body: JSON.stringify({ prompt: prompt.trim(), type: mode }),
+        body: JSON.stringify({ prompt: prompt.trim(), kind: mode }),
       });
       if (res.jobId) {
         setJobId(res.jobId);
@@ -42,7 +43,7 @@ export default function Imagine({ visible, onClose }: Props) {
         setResult(res);
       }
     } catch (e) {
-      Alert.alert('Error', (e as Error).message);
+      showAlert('Error', (e as Error).message);
     } finally {
       setGenerating(false);
     }
@@ -58,7 +59,7 @@ export default function Imagine({ visible, onClose }: Props) {
           setResult(status);
           setPolling(false);
         } else if (status.status === 'failed') {
-          Alert.alert('Failed', status.error || 'Generation failed');
+          showAlert('Failed', status.error || 'Generation failed');
           setPolling(false);
         }
       } catch {}

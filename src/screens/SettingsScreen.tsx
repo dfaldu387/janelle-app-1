@@ -1,3 +1,4 @@
+import { showAlert } from '../components/DarkAlert';
 import React, { useEffect, useState } from 'react';
 import {
   Alert, Linking, Pressable, ScrollView,
@@ -43,7 +44,7 @@ function KeyField({ label, placeholder, hint, hasKey, linkUrl, linkText, onSave,
           </View>
           <View style={s.kfActions}>
             <Pressable style={s.kfBtn} onPress={() => setEditing(true)}><Text style={s.kfBtnText}>Replace</Text></Pressable>
-            <Pressable style={s.kfBtn} onPress={() => Alert.alert('Remove key?', '', [
+            <Pressable style={s.kfBtn} onPress={() => showAlert('Remove key?', '', [
               { text: 'Cancel', style: 'cancel' }, { text: 'Remove', style: 'destructive', onPress: onRemove },
             ])}><Text style={[s.kfBtnText, { color: C.crit }]}>Remove</Text></Pressable>
           </View>
@@ -122,19 +123,19 @@ export default function SettingsScreen({ onClose }: Props) {
   const apiSave = async (path: string, body: any, onOk: () => void, msg: string) => {
     setSaving(true);
     try { await api(path, { method: 'PUT', body: JSON.stringify(body) }); onOk(); show(msg); }
-    catch (e) { Alert.alert('Error', (e as Error).message); }
+    catch (e) { showAlert('Error', (e as Error).message); }
     finally { setSaving(false); }
   };
   const apiDel = async (path: string, onOk: () => void, msg: string) => {
     setSaving(true);
     try { await api(path, { method: 'DELETE' }); onOk(); show(msg); }
-    catch (e) { Alert.alert('Error', (e as Error).message); }
+    catch (e) { showAlert('Error', (e as Error).message); }
     finally { setSaving(false); }
   };
 
   const changePassword = async () => {
-    if (newPwd !== confirmPwd) { Alert.alert('Error', 'Passwords do not match'); return; }
-    if (newPwd.length < 6) { Alert.alert('Error', 'Minimum 6 characters'); return; }
+    if (newPwd !== confirmPwd) { showAlert('Error', 'Passwords do not match'); return; }
+    if (newPwd.length < 6) { showAlert('Error', 'Minimum 6 characters'); return; }
     setSaving(true);
     try {
       const { supabase } = require('../lib/supabase');
@@ -142,14 +143,14 @@ export default function SettingsScreen({ onClose }: Props) {
       if (error) throw error;
       setCurPwd(''); setNewPwd(''); setConfirmPwd('');
       show('Password changed');
-    } catch (e) { Alert.alert('Error', (e as Error).message); }
+    } catch (e) { showAlert('Error', (e as Error).message); }
     finally { setSaving(false); }
   };
 
   // ── Tab content ──
   const renderAI = () => (
     <>
-      <Card icon="sparkles-outline" title="Jenny's brain — Claude" desc="Anthropic API key for AI assistant">
+      <Card icon="sparkles-outline" title="Janelle's brain — Claude" desc="Anthropic API key for AI assistant">
         <KeyField label="Anthropic API Key" placeholder="sk-ant-..." hint={ai.keyHint} hasKey={ai.configured}
           linkUrl="https://console.anthropic.com/settings/keys" linkText="Get key from console.anthropic.com"
           onSave={k => apiSave(ENDPOINTS.SETTINGS_AI_KEY, { key: k }, () => setAi((p: any) => ({ ...p, configured: true, keyHint: k.slice(-4) })), 'Claude key saved')}
@@ -293,7 +294,7 @@ export default function SettingsScreen({ onClose }: Props) {
               const result = await api<any>(ENDPOINTS.SETTINGS_USAGE_LINK + '/rotate', { method: 'POST' });
               setUsageLink(result || {});
               show('Link created');
-            } catch (e) { Alert.alert('Error', (e as Error).message); }
+            } catch (e) { showAlert('Error', (e as Error).message); }
             finally { setSaving(false); }
           }}>
             <Text style={s.saveBtnText}>Create a link</Text>
@@ -334,7 +335,7 @@ export default function SettingsScreen({ onClose }: Props) {
       </Card>
 
       <Pressable style={s.signOutBtn} onPress={() => {
-        Alert.alert('Sign out', 'Are you sure?', [
+        showAlert('Sign out', 'Are you sure?', [
           { text: 'Cancel', style: 'cancel' },
           { text: 'Sign out', style: 'destructive', onPress: signOut },
         ]);

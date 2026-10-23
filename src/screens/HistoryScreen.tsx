@@ -1,3 +1,4 @@
+import { showAlert } from '../components/DarkAlert';
 import React, { useState } from 'react';
 import {
   Alert,
@@ -17,7 +18,7 @@ const C = {
   page: '#0F1724', surface: '#162032', sunk: '#1E2A40',
   ink: '#F1F5F9', inkSoft: '#BFCBDB', inkFaint: '#8C9BB2',
   line: '#2C3A52', lineSoft: '#222F44',
-  brass: '#2563EB', brassLight: '#60A5FA', brassDeep: '#1D4ED8',
+  brass: '#2563EB', brassLight: '#60A5FA', brassDeep: '#60A5FA',
   nav: '#0F1B2D', crit: '#F87171', warn: '#FBBF24', good: '#4ADE80',
 };
 
@@ -60,7 +61,7 @@ function conversationToMarkdown(c: Conversation): string {
   const lines = [`# ${c.title || 'Conversation'}`, `Created: ${new Date(c.createdAt).toLocaleString()}`, ''];
   for (const m of c.messages) {
     const time = new Date(m.timestamp).toLocaleString();
-    lines.push(m.role === 'user' ? `**You** (${time}):` : `**Jenny** (${time}):`, m.content, '');
+    lines.push(m.role === 'user' ? `**You** (${time}):` : `**Janelle** (${time}):`, m.content, '');
   }
   return lines.join('\n');
 }
@@ -112,7 +113,7 @@ export default function HistoryScreen({
 
   const handleDelete = (c: Conversation) => {
     setMenuOpenId(null);
-    Alert.alert('Delete conversation', `Delete "${c.title || 'this conversation'}"?`, [
+    showAlert('Delete conversation', `Delete "${c.title || 'this conversation'}"?`, [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: () => onDelete(c.id) },
     ]);

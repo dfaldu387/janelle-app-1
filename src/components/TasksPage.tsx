@@ -1,3 +1,4 @@
+import { showAlert } from '../components/DarkAlert';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert, FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
@@ -217,7 +218,7 @@ export default function TasksPage({ onClose }: Props) {
       setData(prev => prev.map(t => t.id === id ? { ...t, ...patch } as Task : t));
       if (selectedTask?.id === id) setSelectedTask(prev => prev ? { ...prev, ...patch } as Task : null);
       setEditField(null);
-    } catch (e) { Alert.alert('Error', (e as Error).message); }
+    } catch (e) { showAlert('Error', (e as Error).message); }
     finally { setSaving(false); }
   };
 
@@ -227,7 +228,7 @@ export default function TasksPage({ onClose }: Props) {
       await api(ENDPOINTS.TASKS + `/${id}`, { method: 'DELETE' });
       setData(prev => prev.filter(t => t.id !== id));
       setSelectedTask(null);
-    } catch (e) { Alert.alert('Error', (e as Error).message); }
+    } catch (e) { showAlert('Error', (e as Error).message); }
     finally { setSaving(false); }
   };
 
@@ -251,7 +252,7 @@ export default function TasksPage({ onClose }: Props) {
         setDetail({ ...detail, comments: [...detail.comments, res.comment] });
       }
       setCommentText('');
-    } catch (e) { Alert.alert('Error', (e as Error).message); }
+    } catch (e) { showAlert('Error', (e as Error).message); }
     finally { setCommentSaving(false); }
   };
 
@@ -262,7 +263,7 @@ export default function TasksPage({ onClose }: Props) {
       if (detail) {
         setDetail({ ...detail, comments: detail.comments.filter(c => c.id !== commentId) });
       }
-    } catch (e) { Alert.alert('Error', (e as Error).message); }
+    } catch (e) { showAlert('Error', (e as Error).message); }
   };
 
   const saveEditComment = async (commentId: string) => {
@@ -276,12 +277,12 @@ export default function TasksPage({ onClose }: Props) {
         setDetail({ ...detail, comments: detail.comments.map(c => c.id === commentId ? { ...c, body: editCommentText.trim() } : c) });
       }
       setEditingComment(null);
-    } catch (e) { Alert.alert('Error', (e as Error).message); }
+    } catch (e) { showAlert('Error', (e as Error).message); }
     finally { setCommentSaving(false); }
   };
 
   const createTask = async () => {
-    if (!newTitle.trim()) { Alert.alert('Error', 'Title is required'); return; }
+    if (!newTitle.trim()) { showAlert('Error', 'Title is required'); return; }
     setCreating(true);
     try {
       const res = await api<{ id: string }>(ENDPOINTS.TASKS, {
@@ -299,7 +300,7 @@ export default function TasksPage({ onClose }: Props) {
       setData(Array.isArray(d) ? d : []);
       setCreateOpen(false);
       setNewTitle(''); setNewDetail(''); setNewKind('admin'); setNewCategory('admin'); setNewDue('');
-    } catch (e) { Alert.alert('Error', (e as Error).message); }
+    } catch (e) { showAlert('Error', (e as Error).message); }
     finally { setCreating(false); }
   };
 
@@ -322,7 +323,7 @@ export default function TasksPage({ onClose }: Props) {
   // Long-press "Move to" — the standard mobile pattern for moving cards between columns
   const showMoveTo = useCallback((t: Task) => {
     const targets = STATUSES.filter(s => s !== t.status);
-    Alert.alert(
+    showAlert(
       `Move "${t.title}"`,
       'Move to which column?',
       [
@@ -384,7 +385,7 @@ export default function TasksPage({ onClose }: Props) {
       })),
       { text: 'Cancel', style: 'cancel' as const },
     ];
-    Alert.alert('Assign to', 'Choose a team member', options);
+    showAlert('Assign to', 'Choose a team member', options);
   };
 
   // Project picker
@@ -398,7 +399,7 @@ export default function TasksPage({ onClose }: Props) {
       })),
       { text: 'Cancel', style: 'cancel' as const },
     ];
-    Alert.alert('Change project', 'Choose a project', options);
+    showAlert('Change project', 'Choose a project', options);
   };
 
   // Category picker
@@ -411,7 +412,7 @@ export default function TasksPage({ onClose }: Props) {
       })),
       { text: 'Cancel', style: 'cancel' as const },
     ];
-    Alert.alert('Change category', 'Choose a category', options);
+    showAlert('Change category', 'Choose a category', options);
   };
 
   return (
@@ -789,7 +790,7 @@ export default function TasksPage({ onClose }: Props) {
                                 <Pressable hitSlop={8} onPress={() => { setEditingComment(c.id); setEditCommentText(c.body); }}>
                                   <Icon name="create-outline" size={12} color={C.inkFaint} />
                                 </Pressable>
-                                <Pressable hitSlop={8} onPress={() => Alert.alert('Delete comment?', '', [
+                                <Pressable hitSlop={8} onPress={() => showAlert('Delete comment?', '', [
                                   { text: 'Cancel', style: 'cancel' },
                                   { text: 'Delete', style: 'destructive', onPress: () => deleteComment(c.id) },
                                 ])}>
@@ -881,7 +882,7 @@ export default function TasksPage({ onClose }: Props) {
 
               {/* Delete task */}
               <Pressable style={{ marginBottom: 30, alignSelf: 'flex-start', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8, backgroundColor: 'rgba(248,113,113,0.1)', borderWidth: 1, borderColor: 'rgba(248,113,113,0.25)' }}
-                onPress={() => Alert.alert('Delete task', `Delete "${selectedTask.title}"?`, [
+                onPress={() => showAlert('Delete task', `Delete "${selectedTask.title}"?`, [
                   { text: 'Cancel', style: 'cancel' },
                   { text: 'Delete', style: 'destructive', onPress: () => deleteTask(selectedTask.id) },
                 ])}>

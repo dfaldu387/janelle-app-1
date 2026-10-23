@@ -14,7 +14,7 @@ const C = {
   sunk: '#1E2A40',
   lineSoft: '#222F44',
   brass: '#2563EB',
-  brassDeep: '#1D4ED8',
+  brassDeep: '#60A5FA',
 };
 
 // ── Inline ──────────────────────────────────────────────────

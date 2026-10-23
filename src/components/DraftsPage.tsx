@@ -1,3 +1,4 @@
+import { showAlert } from '../components/DarkAlert';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Alert, FlatList, Linking, Platform, Pressable, StyleSheet, Text, TextInput, View,
@@ -94,7 +95,7 @@ function mailtoUrl(d: { to: string; cc: string; subject: string; body: string })
 
 function openMailOptions(draft: { to: string; cc: string; subject: string; body: string }, gmailUrl: string) {
   const mailto = mailtoUrl(draft);
-  Alert.alert('Open draft in…', undefined, [
+  showAlert('Open draft in…', undefined, [
     { text: 'Gmail', onPress: () => Linking.openURL(gmailUrl) },
     { text: 'Mail App', onPress: () => Linking.openURL(mailto) },
     { text: 'Cancel', style: 'cancel' },
@@ -161,18 +162,18 @@ export default function DraftsPage({ onClose }: Props) {
       setData(prev => prev.map(d => d.id === editingId ? { ...d, subject: editSubject, to: editTo, body_preview: bodyText } : d));
       setEditingId(null);
     } catch (e) {
-      Alert.alert('Error', (e as Error).message);
+      showAlert('Error', (e as Error).message);
     } finally { setSaving(false); }
   };
 
   const deleteDraft = (id: string) => {
-    Alert.alert('Delete draft', 'Are you sure you want to delete this draft?', [
+    showAlert('Delete draft', 'Are you sure you want to delete this draft?', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: async () => {
         try {
           await api(ENDPOINTS.DRAFTS + `/${id}`, { method: 'DELETE' });
           setData(prev => prev.filter(d => d.id !== id));
-        } catch (e) { Alert.alert('Error', (e as Error).message); }
+        } catch (e) { showAlert('Error', (e as Error).message); }
       }},
     ]);
   };

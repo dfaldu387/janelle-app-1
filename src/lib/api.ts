@@ -136,6 +136,18 @@ export async function apiStream(
   }
 }
 
+/**
+ * Build an authenticated image URL that RN Image can load.
+ * Returns { uri, headers } for use as RN Image source.
+ */
+export async function apiImageSource(path: string): Promise<{ uri: string; headers: Record<string, string> }> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return { uri: `${BASE}/api${path}`, headers };
+}
+
 export async function apiUpload<T>(path: string, file: Blob): Promise<T> {
   const headers = new Headers({
     'Content-Type': file.type || 'application/octet-stream',

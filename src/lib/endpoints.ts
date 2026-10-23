@@ -10,7 +10,7 @@ export const ENDPOINTS = {
   // Profile
   ME: '/me',
 
-  // Assistant (Jenny)
+  // Assistant (Janelle)
   ASSISTANT_ASK: '/assistant/ask',
   ASSISTANT_BRIEFING: '/assistant/briefing',
   ASSISTANT_CONFIRM: '/assistant/confirm',
