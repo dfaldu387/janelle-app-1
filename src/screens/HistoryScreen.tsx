@@ -1,6 +1,7 @@
 import { showAlert } from '../components/DarkAlert';
 import React, { useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Pressable,
   ScrollView,
@@ -32,6 +33,7 @@ const SPEECH_LANGS = [
 
 interface Props {
   conversations: Conversation[];
+  loading?: boolean;
   activeId: string;
   speechLang: string;
   onSpeechLangChange: (code: string) => void;
@@ -69,7 +71,7 @@ function conversationToMarkdown(c: Conversation): string {
 }
 
 export default function HistoryScreen({
-  conversations, activeId, speechLang, onSpeechLangChange,
+  conversations, loading, activeId, speechLang, onSpeechLangChange,
   speakReplies, onSpeakRepliesChange,
   onSelect, onNew, onPin, onRename, onDelete, onClose,
 }: Props) {
@@ -264,9 +266,13 @@ export default function HistoryScreen({
         keyboardShouldPersistTaps="handled">
         {groups.length === 0 && (
           <View style={s.emptyWrap}>
-            <Text style={s.emptyText}>
-              {search ? 'No conversation matches that.' : 'Your conversations will be kept here.'}
-            </Text>
+            {loading ? (
+              <ActivityIndicator size="small" color={C.brassLight} />
+            ) : (
+              <Text style={s.emptyText}>
+                {search ? 'No conversation matches that.' : 'Your conversations will be kept here.'}
+              </Text>
+            )}
           </View>
         )}
         {groups.map(g => (

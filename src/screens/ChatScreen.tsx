@@ -86,6 +86,7 @@ interface AssistantTurn {
   reply: string;
   answer?: { lead?: string; items?: AnswerItem[]; speech?: string; suggestions?: string[]; sources?: string[]; caveat?: string; more?: number; document?: string; documentTitle?: string };
   proposed?: Array<{ key: string; tool: string; summary: string; input: Record<string, unknown> }>;
+  suggestions?: string[];
 }
 interface BriefingItem {
   kind: string; id?: string; title: string;
@@ -1813,9 +1814,9 @@ export default function ChatScreen() {
   ];
 
   const renderEmpty = () => {
-    if (briefingLoading) return (
+    if (!loaded || briefingLoading) return (
       <View style={s.emptyWrap}>
-        <Loader message="Loading your briefing..." />
+        <Loader message={!loaded ? "Loading..." : "Loading your briefing..."} />
       </View>
     );
     return (
@@ -1840,6 +1841,12 @@ export default function ChatScreen() {
     );
   };
 
+  // Match web: derive suggestions from the last assistant message's answer
+  const lastMsg = messages[messages.length - 1];
+  const derivedSuggestions = !sending && lastMsg?.role === 'assistant' ? (lastMsg.answer?.suggestions ?? []) : [];
+  // Merge: prefer derived from message, fall back to state (for briefing suggestions)
+  const activeSuggestions = derivedSuggestions.length > 0 ? derivedSuggestions : (sending ? [] : suggestions);
+
   const listFooter = React.useMemo(() => (
     <>
       {sending && (
@@ -1850,9 +1857,9 @@ export default function ChatScreen() {
           </View>
         </View>
       )}
-      {suggestions.length > 0 && !sending && (
+      {activeSuggestions.length > 0 && !sending && (
         <View style={s.suggestionsWrap}>
-          {suggestions.map((sg, i) => (
+          {activeSuggestions.map((sg, i) => (
             <Pressable key={i} style={s.suggestionChip} onPress={() => sendMessage(sg)}>
               <Text style={s.suggestionText}>{sg}</Text>
             </Pressable>
@@ -1860,7 +1867,7 @@ export default function ChatScreen() {
         </View>
       )}
     </>
-  ), [sending, statusMsg, suggestions, sendMessage]);
+  ), [sending, statusMsg, activeSuggestions, sendMessage]);
 
   const convCount = conversations.filter(c => c.messages.length > 0).length;
 
@@ -1902,6 +1909,7 @@ export default function ChatScreen() {
       <KeyboardAvoidingView style={s.chatArea} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <FlatList
           ref={flatListRef} data={messages} renderItem={renderMessage} keyExtractor={keyExtractor}
+          extraData={`${sending}-${activeSuggestions.length}`}
           contentContainerStyle={[s.messageList, messages.length === 0 && s.messageListEmpty]}
           ListEmptyComponent={renderEmpty}
           ListFooterComponent={listFooter}
@@ -2137,6 +2145,7 @@ export default function ChatScreen() {
       <Modal visible={historyOpen} animationType="slide" presentationStyle="pageSheet">
         <HistoryScreen
           conversations={conversations.filter(c => c.messages.length > 0)}
+          loading={!loaded}
           activeId={activeId}
           speechLang={speechLang}
           onSpeechLangChange={setSpeechLang}
